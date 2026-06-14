@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>NetScan</title>
+<title>NetScan v2</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -161,6 +161,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 .hcard-os{font-size:10px;color:var(--text3)}
 .hcard-lat{font-family:var(--mono);font-size:10px;color:var(--accent)}
 .hcard-cve{position:absolute;top:8px;right:8px;font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(255,77,106,.15);color:var(--red);font-family:var(--mono);font-weight:600}
+.hcard-muted{position:absolute;top:8px;right:8px;font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(74,90,110,.25);color:var(--text3);font-family:var(--mono)}
+.hcard.excluded{opacity:.55}
+.hcard.excluded:hover{opacity:.85}
 .risk-stripe{position:absolute;bottom:0;left:0;height:2px;border-radius:0 0 8px 8px}
 /* list mode */
 #host-grid.list .hcard{border-radius:4px;padding:9px 13px}
@@ -260,7 +263,7 @@ svg text{font-family:var(--mono)}
 <body>
 <div id="app">
 <div id="topbar">
-  <div class="logo"><div class="ld"></div>NetScan <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">v1.0</span></div>
+  <div class="logo"><div class="ld"></div>NetScan <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">v2</span></div>
   <div class="dvd"></div>
   <input id="subnet-in" value="192.168.1" spellcheck="false" placeholder="subnet"/>
   <select id="range-sel">
@@ -274,8 +277,10 @@ svg text{font-family:var(--mono)}
   <button class="tb-btn primary" id="scan-btn" onclick="toggleScan()">▶ Scan</button>
   <button class="tb-btn" onclick="showTopo()">🗺 Map</button>
   <button class="tb-btn" onclick="exportJSON()">⬇ Export</button>
+  <button class="tb-btn" onclick="exportCSV()">⬇ CSV</button>
   <button class="tb-btn" onclick="showModal('webhook')">🔔 Webhook</button>
   <button class="tb-btn" onclick="showModal('monitor')">⏱ Monitor</button>
+  <button class="tb-btn" onclick="setApiToken()" title="Set API token (only needed if the server was started with NETSCAN_TOKEN)">🔑</button>
   <div class="dvd"></div>
   <div id="status-chip"><div class="sdot" id="sdot"></div><span id="stxt">idle</span></div>
 </div>
@@ -443,6 +448,21 @@ const API = window.location.port==='5000' ? '' : 'http://localhost:5000';
 let allHosts=[], activeFilters=new Set(), scanning=false;
 let viewMode='grid', selHost=null, dpTab='info';
 let _sse=null, traceData={};
+let excludedIPs=new Set();
+
+// Optional shared-secret header — only matters if the server was started
+// with NETSCAN_TOKEN set. No-op (empty header) otherwise.
+function apiHeaders(extra){
+  const tok=localStorage.getItem('netscan_token')||'';
+  return {...(tok?{'X-NetScan-Token':tok}:{}), ...(extra||{})};
+}
+function setApiToken(){
+  const cur=localStorage.getItem('netscan_token')||'';
+  const next=prompt('NetScan API token (leave blank if NETSCAN_TOKEN is not set on the server):',cur);
+  if(next===null)return;
+  next.trim()?localStorage.setItem('netscan_token',next.trim()):localStorage.removeItem('netscan_token');
+  toast(next.trim()?'API token saved':'API token cleared','#4a9eff');
+}
 
 // ── Nav / Panel switching ─────────────────────────────────────────────────────
 function switchPanel(btn){
@@ -458,7 +478,7 @@ function switchPanel(btn){
 // ── Scan control ──────────────────────────────────────────────────────────────
 async function toggleScan(){
   if(scanning){
-    try{await fetch(`${API}/api/stop`,{method:'POST'})}catch(e){}
+    try{await fetch(`${API}/api/stop`,{method:'POST',headers:apiHeaders()})}catch(e){}
     return;
   }
   try{
@@ -570,15 +590,13 @@ function ptClass(p){
 function riskColor(r){return r>=4?'var(--red)':r>=2?'var(--amber)':'var(--accent)'}
 function riskClass(r){return r>=4?'r':r>=2?'a':'g'}
 
-function renderCard(h){
-  const grid=document.getElementById('host-grid');
-  const el=document.createElement('div');
-  el.className='hcard new'; el.id=`c_${h.ip.replace(/\./g,'_')}`;
+function cardInnerHTML(h){
   const ports=Object.entries(h.ports||{}).slice(0,6);
   const cveCount=(h.cves||[]).length;
   const riskCol=riskColor(h.risk||0);
-  el.innerHTML=`
+  return `
     ${cveCount?`<div class="hcard-cve">CVE×${cveCount}</div>`:''}
+    ${excludedIPs.has(h.ip)?'<div class="hcard-muted" title="Excluded from change alerts">🔇 muted</div>':''}
     <div class="hcard-top">
       <div class="hcard-ico" style="background:${h.bg}">${h.ico}</div>
       <div style="flex:1;min-width:0">
@@ -595,9 +613,38 @@ function renderCard(h){
       <span class="hcard-lat">${h.latency||0}ms</span>
     </div>
     <div class="risk-stripe" style="width:${(h.risk||0)/4*100}%;background:${riskCol}"></div>`;
+}
+
+function renderCard(h){
+  const grid=document.getElementById('host-grid');
+  const el=document.createElement('div');
+  el.className='hcard new'+(excludedIPs.has(h.ip)?' excluded':'');
+  el.id=`c_${h.ip.replace(/\./g,'_')}`;
+  el.innerHTML=cardInnerHTML(h);
   el.onclick=()=>selectHost(h);
   grid.appendChild(el);
   document.getElementById('empty').style.display='none';
+}
+
+// Refresh an existing card + allHosts entry in place (used after rescan)
+// without losing its position in the grid or its selection state.
+function updateCardInPlace(h){
+  const idx=allHosts.findIndex(x=>x.ip===h.ip);
+  if(idx>=0) allHosts[idx]=h; else allHosts.push(h);
+  const el=document.getElementById(`c_${h.ip.replace(/\./g,'_')}`);
+  if(el){
+    el.innerHTML=cardInnerHTML(h);
+    el.className='hcard'+(el.classList.contains('sel')?' sel':'')+(excludedIPs.has(h.ip)?' excluded':'');
+    el.onclick=()=>selectHost(h);
+  } else {
+    renderCard(h);
+  }
+  if(selHost&&selHost.ip===h.ip){
+    selHost=h;
+    renderDpHeader(h);
+    renderDpBody(h);
+  }
+  updateSidebar();
 }
 
 function applyFilters(){
@@ -796,13 +843,58 @@ function renderDpBody(h){
 }
 
 function renderDpActions(h){
+  const muted=excludedIPs.has(h.ip);
   document.getElementById('dp-actions').innerHTML=`
+    <button class="dpa" id="dpa-rescan" onclick="rescanHost('${h.ip}')"><span class="di">↻</span>Rescan host</button>
+    <button class="dpa" onclick="toggleExclude('${h.ip}')"><span class="di">${muted?'🔔':'🔇'}</span>${muted?'Unmute alerts':'Mute alerts'}</button>
     <button class="dpa" onclick="runDeepScan('${h.ip}')"><span class="di">⚡</span>Deep port scan</button>
     <button class="dpa" onclick="runTrace('${h.ip}')"><span class="di">🔀</span>Traceroute</button>
     <button class="dpa" onclick="copyIP('${h.ip}')"><span class="di">📋</span>Copy IP</button>
     <button class="dpa" onclick="openHTTP('${h.ip}',${JSON.stringify(h.ports)})"><span class="di">🌐</span>Open HTTP</button>
     <button class="dpa" onclick="wakeOnLan('${h.mac}','${h.ip}')"><span class="di">🔌</span>Wake on LAN</button>
     <button class="dpa" onclick="lookupCVE('${h.ip}')"><span class="di">🔎</span>CVE lookup</button>`;
+}
+
+// Re-fingerprint a single host (no full subnet sweep needed)
+async function rescanHost(ip){
+  const btn=document.getElementById('dpa-rescan');
+  const deep=document.getElementById('deep-chk')?.checked?'1':'0';
+  if(btn){btn.disabled=true;btn.innerHTML=`<span class="di">↻</span>Rescanning…`;}
+  try{
+    const r=await fetch(`${API}/api/rescan?ip=${ip}&deep=${deep}`,{headers:apiHeaders()});
+    const d=await r.json();
+    if(d.error){
+      toast(d.error==='unreachable'?`${ip} did not respond`:d.error,'#f0a500');
+      addLog(`Rescan ${ip}: ${d.error}`,'err');
+    } else {
+      updateCardInPlace(d);
+      addLog(`Rescanned ${ip} — ${d.label}, ${Object.keys(d.ports||{}).length} open port(s)`,'up');
+      toast(`Rescanned ${ip}`,'#00e5a0');
+    }
+  }catch(e){
+    toast('Rescan failed — server unreachable','#ff4d6a');
+  }finally{
+    if(btn){btn.disabled=false;}
+    if(selHost&&selHost.ip===ip) renderDpActions(selHost);
+  }
+}
+
+// Mute/unmute a host from change-detection alerts (new/closed port, lost host)
+async function toggleExclude(ip){
+  const nowExcluded=!excludedIPs.has(ip);
+  try{
+    const r=await fetch(`${API}/api/exclude`,{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),body:JSON.stringify({ip,excluded:nowExcluded})});
+    const d=await r.json();
+    if(d.error){toast(d.error,'#ff4d6a');return;}
+    nowExcluded?excludedIPs.add(ip):excludedIPs.delete(ip);
+    const h=allHosts.find(x=>x.ip===ip);
+    if(h){
+      const el=document.getElementById(`c_${ip.replace(/\./g,'_')}`);
+      if(el){el.innerHTML=cardInnerHTML(h);el.className='hcard'+(el.classList.contains('sel')?' sel':'')+(nowExcluded?' excluded':'');el.onclick=()=>selectHost(h);}
+    }
+    if(selHost&&selHost.ip===ip) renderDpActions(selHost);
+    toast(nowExcluded?`${ip} muted — change alerts suppressed`:`${ip} unmuted`,'#4a9eff');
+  }catch(e){toast('Could not update exclude state','#ff4d6a');}
 }
 
 function closeDetail(){
@@ -828,7 +920,7 @@ async function runTrace(ip){
 
 async function wakeOnLan(mac,ip){
   if(!mac||mac==='—'){toast('No MAC address available','#f0a500');return;}
-  const r=await fetch(`${API}/api/wol`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac})});
+  const r=await fetch(`${API}/api/wol`,{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),body:JSON.stringify({mac})});
   const d=await r.json();
   d.ok?toast(`WoL magic packet sent to ${mac}`,'#00e5a0'):toast('WoL failed — check MAC','#ff4d6a');
 }
@@ -1069,6 +1161,30 @@ async function exportJSON(){
   toast(`Exported ${data.length} hosts`,'#00e5a0');
 }
 
+function csvEscape(v){
+  const s=String(v??'');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+}
+async function exportCSV(){
+  let data=allHosts;
+  if(!data.length){try{const r=await fetch(`${API}/api/last`);data=await r.json();}catch(e){}}
+  if(!data.length){toast('No data to export','#f0a500');return;}
+  const cols=['ip','hostname','mac','vendor','os','device_type','label','risk','latency','ttlRaw','ports'];
+  const header=['ip','hostname','mac','vendor','os','device_type','label','risk','latency_ms','ttl','ports'];
+  const rows=data.map(h=>{
+    const ports=Object.entries(h.ports||{}).map(([p,s])=>`${p}/${s}`).join('; ');
+    return [h.ip,h.hostname,h.mac,h.vendor,h.os,h.device_type,h.label,h.risk||0,h.latency||0,h.ttlRaw||0,ports]
+      .map(csvEscape).join(',');
+  });
+  const csv=[header.join(','),...rows].join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`netscan-${new Date().toISOString().slice(0,16).replace(/:/g,'-')}.csv`;
+  a.click();
+  toast(`Exported ${data.length} hosts as CSV`,'#00e5a0');
+}
+
 // ── Modals ────────────────────────────────────────────────────────────────────
 function showModal(type){
   const wrap=document.getElementById('modal-wrap');
@@ -1111,12 +1227,12 @@ async function saveWebhook(){
 async function startMonitor(){
   const subnet=document.getElementById('mon-subnet').value.trim();
   const interval=parseInt(document.getElementById('mon-interval').value)||300;
-  await fetch(`${API}/api/monitor/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subnet,interval})});
+  await fetch(`${API}/api/monitor/start`,{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),body:JSON.stringify({subnet,interval})});
   toast(`Monitor started — scanning every ${interval}s`,'#00e5a0');
   closeModal();
 }
 async function stopMonitor(){
-  await fetch(`${API}/api/monitor/stop`,{method:'POST'});
+  await fetch(`${API}/api/monitor/stop`,{method:'POST',headers:apiHeaders()});
   toast('Monitor stopped','#f0a500');
   closeModal();
 }
@@ -1139,6 +1255,10 @@ loadStats();
     if(d.hosts_found>0) addLog(`Server has ${d.hosts_found} host(s) from last scan`,'info');
     else addLog('Server ready','info');
   }catch(e){addLog('server.py not detected — start it: sudo python3 server.py','err')}
+  try{
+    const r2=await fetch(`${API}/api/excluded`,{signal:AbortSignal.timeout(1500)});
+    excludedIPs=new Set(await r2.json());
+  }catch(e){}
 })();
 window.onclick=e=>{if(e.target===document.getElementById('modal-wrap'))closeModal()};
 </script>

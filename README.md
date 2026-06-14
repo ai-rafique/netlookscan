@@ -8,7 +8,7 @@ A self-hosted dashboard for discovering, fingerprinting, and monitoring devices 
 
 - **Live dashboard** — dark-themed web UI, streamed scan results in real time
 - **Ping sweep** of a configurable subnet and host range
-- **Fingerprinting** — hostname (reverse DNS), OS guess (TTL heuristic), MAC + vendor (ARP/OUI lookup), open ports (~30 common services), and inferred device type with icons
+- **Fingerprinting** — hostname (reverse DNS), OS guess (TTL heuristic), MAC + vendor (ARP/OUI lookup with optional full IEEE registry support), open ports (~30 common services), and inferred device type with icons
 - **Deep scan mode** — banner grabbing (SSH, FTP, SMTP, Telnet), HTTP title/Server header, SNMP `sysDescr`/uptime, NetBIOS name, default-credential checks, and CVE lookups (NVD, cached)
 - **Risk scoring** — flags risky open services (Telnet, FTP, VNC, RDP, exposed SMB, etc.)
 - **Deep port scan** — scan a custom port range on a single host
@@ -28,6 +28,7 @@ A self-hosted dashboard for discovering, fingerprinting, and monitoring devices 
 | `db.py`            | SQLite persistence — scans, hosts, ports, known hosts, change log, CVE cache |
 | `netscanner.html`  | Web dashboard front end                                                   |
 | `launch.sh`        | Installs dependencies and starts the server                              |
+| `oui.csv`          | *(optional)* Full IEEE OUI registry for comprehensive MAC vendor lookups |
 
 ## Requirements
 
@@ -46,6 +47,18 @@ chmod +x launch.sh
 Then open **http://localhost:5000** in your browser.
 
 `launch.sh` installs Flask and Flask-CORS via `apt` if they're missing, then runs `server.py` with `sudo` (required for ARP and raw socket access on most systems).
+
+## MAC Vendor Lookups
+
+`scanner_core.py` ships with a curated `OUI_TABLE` (~75 entries) covering common LAN, IoT, and consumer gear — virtualization platforms, Raspberry Pi, Apple/Google/Amazon/Samsung devices, smart-home gear (Sonos, Roku, Philips Hue, Espressif-based IoT, etc.), game consoles, routers/switches, and common PC/NAS vendors.
+
+For near-complete coverage, drop the official IEEE MA-L OUI registry next to the scripts:
+
+```bash
+curl -o oui.csv https://standards-oui.ieee.org/oui/oui.csv
+```
+
+If `oui.csv` is present, it's loaded automatically at startup (~35,000 entries) and merged with `OUI_TABLE`, with the curated names taking priority for friendlier labels (e.g. "Raspberry Pi" instead of "Raspberry Pi Foundation"). If the file isn't present, everything still works using just the built-in table.
 
 ## Using the Dashboard
 
@@ -91,7 +104,7 @@ A SQLite database (`netscan.db`) is created automatically alongside the scripts 
 ## Limitations
 
 - TTL-based OS guessing is a heuristic and not always accurate
-- MAC/vendor lookup only works for devices on the same L2 segment (relies on the local ARP cache) and is limited to the OUIs in `OUI_TABLE`
+- MAC/vendor lookup only works for devices on the same L2 segment (relies on the local ARP cache); coverage is limited to `OUI_TABLE` unless `oui.csv` (full IEEE registry) is present
 - SNMP, NetBIOS, and HTTP enrichment depend on those services being enabled on the target device
 - Deep scan, default-credential checks, and full port-range scans are noticeably more invasive — use only for auditing your own devices
 

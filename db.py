@@ -5,6 +5,7 @@ Tables: scans, hosts, ports, changes, alerts, cve_cache
 """
 
 import sqlite3, json, os
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -68,7 +69,8 @@ CREATE TABLE IF NOT EXISTS known_hosts (
     first_seen  TEXT NOT NULL,
     last_seen   TEXT NOT NULL,
     last_ports  TEXT,   -- JSON array of port numbers
-    last_scan_id INTEGER
+    last_scan_id INTEGER,
+    excluded    INTEGER DEFAULT 0   -- muted from change-detection noise
 );
 
 CREATE TABLE IF NOT EXISTS changes (
@@ -87,14 +89,39 @@ CREATE TABLE IF NOT EXISTS cve_cache (
 );
 """
 
-def get_conn() -> sqlite3.Connection:
+@contextmanager
+def get_conn():
+    """
+    Context manager yielding a SQLite connection.
+
+    Commits on clean exit, rolls back on exception, and ALWAYS closes the
+    connection. Previously this was a plain function returning a raw
+    connection — `with get_conn() as conn:` relied on sqlite3's own
+    __exit__, which only commits/rolls back and never closes. Every call
+    site leaked a connection (and a file descriptor); a single deep scan
+    of ~50 hosts could leak 50+ open connections.
+    """
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+    # Migration: older databases predate the `excluded` column on
+    # known_hosts (used to mute hosts from change-detection noise).
+    with get_conn() as conn:
+        try:
+            conn.execute("ALTER TABLE known_hosts ADD COLUMN excluded INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 # ── Scan CRUD ─────────────────────────────────────────────────────────────────
 def create_scan(subnet: str) -> int:
@@ -179,10 +206,11 @@ def detect_changes(scan_id: int, current_hosts: list[dict]) -> list[dict]:
     with get_conn() as conn:
         known = {r["ip"]: dict(r) for r in conn.execute("SELECT * FROM known_hosts").fetchall()}
         current_ips = {h["ip"] for h in current_hosts}
+        excluded_ips = {ip for ip, kh in known.items() if kh.get("excluded")}
 
         # Lost hosts
         for ip, kh in known.items():
-            if ip not in current_ips:
+            if ip not in current_ips and ip not in excluded_ips:
                 changes.append({"scan_id": scan_id, "ip": ip,
                     "change_type": "lost_host",
                     "detail": f"Host {ip} ({kh['hostname'] or '?'}) no longer responding",
@@ -200,17 +228,18 @@ def detect_changes(scan_id: int, current_hosts: list[dict]) -> list[dict]:
                 prev_ports = set(json.loads(known[ip]["last_ports"] or "[]"))
                 new_ports  = curr_ports - prev_ports
                 closed     = prev_ports - curr_ports
-                for p in new_ports:
-                    svc = h.get("ports", {}).get(p, "?")
-                    changes.append({"scan_id": scan_id, "ip": ip,
-                        "change_type": "new_port",
-                        "detail": f"New open port on {ip}: {p}/{svc}",
-                        "detected_at": now})
-                for p in closed:
-                    changes.append({"scan_id": scan_id, "ip": ip,
-                        "change_type": "closed_port",
-                        "detail": f"Port closed on {ip}: {p}",
-                        "detected_at": now})
+                if ip not in excluded_ips:
+                    for p in new_ports:
+                        svc = h.get("ports", {}).get(p, "?")
+                        changes.append({"scan_id": scan_id, "ip": ip,
+                            "change_type": "new_port",
+                            "detail": f"New open port on {ip}: {p}/{svc}",
+                            "detected_at": now})
+                    for p in closed:
+                        changes.append({"scan_id": scan_id, "ip": ip,
+                            "change_type": "closed_port",
+                            "detail": f"Port closed on {ip}: {p}",
+                            "detected_at": now})
 
         # Persist changes
         for c in changes:
@@ -249,6 +278,54 @@ def get_known_hosts() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute("SELECT * FROM known_hosts ORDER BY ip").fetchall()
         return [dict(r) for r in rows]
+
+# ── Excluded / muted hosts ────────────────────────────────────────────────────
+def set_excluded(ip: str, excluded: bool):
+    """Mark/unmark a host as excluded from change-detection noise."""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        existing = conn.execute("SELECT ip FROM known_hosts WHERE ip=?", (ip,)).fetchone()
+        if existing:
+            conn.execute("UPDATE known_hosts SET excluded=? WHERE ip=?", (int(excluded), ip))
+        else:
+            # Not seen in a scan yet — create a placeholder so the
+            # exclusion takes effect once it is discovered.
+            conn.execute("""
+                INSERT INTO known_hosts (ip, first_seen, last_seen, last_ports, excluded)
+                VALUES (?,?,?,?,?)
+            """, (ip, now, now, "[]", int(excluded)))
+
+def get_excluded_ips() -> set[str]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT ip FROM known_hosts WHERE excluded=1").fetchall()
+        return {r["ip"] for r in rows}
+
+# ── Single-host touch (used by /api/rescan) ───────────────────────────────────
+def touch_known_host(ip: str, h: dict):
+    """
+    Update (or insert) a known_hosts row for a single rescanned host,
+    outside the normal scan/detect_changes flow. Keeps last_seen and
+    last_ports current so the next full scan's diff stays accurate.
+    """
+    now = datetime.now().isoformat()
+    ports_json = json.dumps(list(h.get("ports", {}).keys()))
+    with get_conn() as conn:
+        existing = conn.execute("SELECT ip FROM known_hosts WHERE ip=?", (ip,)).fetchone()
+        if existing:
+            conn.execute("""
+                UPDATE known_hosts
+                SET last_seen=?, hostname=?, vendor=?, mac=?, label=?, type_key=?, last_ports=?
+                WHERE ip=?
+            """, (now, h.get("hostname"), h.get("vendor"), h.get("mac"),
+                  h.get("label"), h.get("type"), ports_json, ip))
+        else:
+            conn.execute("""
+                INSERT INTO known_hosts
+                  (ip, mac, hostname, vendor, label, type_key,
+                   first_seen, last_seen, last_ports, excluded)
+                VALUES (?,?,?,?,?,?,?,?,?,0)
+            """, (ip, h.get("mac"), h.get("hostname"), h.get("vendor"),
+                  h.get("label"), h.get("type"), now, now, ports_json))
 
 # ── CVE cache ─────────────────────────────────────────────────────────────────
 def get_cve_cache(product: str) -> dict | None:

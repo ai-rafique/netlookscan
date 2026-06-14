@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-server.py — NetScan Flask backend
+server.py — NetScan v2 Flask backend
 All endpoints served from http://localhost:5000
 
 SSE scan stream   GET  /api/scan?subnet=192.168.1&end=255
@@ -21,8 +21,9 @@ Monitoring        GET  /api/monitor/status
                   POST /api/monitor/stop
 """
 
-import json, threading, time, platform, subprocess, re
+import json, os, threading, time, platform, subprocess, re
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, request, jsonify, send_from_directory
@@ -32,12 +33,46 @@ from scanner_core import ping, fingerprint, COMMON_PORTS
 import db
 import enrichment
 
+# ── Configuration (env-overridable) ──────────────────────────────────────────
+# Previously bound 0.0.0.0 with wide-open CORS — a Flask process run as
+# root, with /api/wol, /api/deepscan, /api/stop and /api/monitor/* reachable
+# by anyone on the LAN with no auth. Default is now loopback-only.
+#   NETSCAN_HOST=0.0.0.0     opt in to LAN access
+#   NETSCAN_PORT=5000        change the port
+#   NETSCAN_TOKEN=...        require X-NetScan-Token on mutating endpoints
+#   NETSCAN_ORIGINS=a,b      override allowed CORS origins
+HOST      = os.environ.get("NETSCAN_HOST", "127.0.0.1")
+PORT      = int(os.environ.get("NETSCAN_PORT", "5000"))
+API_TOKEN = os.environ.get("NETSCAN_TOKEN", "").strip()
+ALLOWED_ORIGINS = os.environ.get(
+    "NETSCAN_ORIGINS", f"http://127.0.0.1:{PORT},http://localhost:{PORT}"
+).split(",")
+
 # ── App setup ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=".")
-CORS(app)
+CORS(app, origins=ALLOWED_ORIGINS)
 db.init_db()
 
 HERE = Path(__file__).parent
+
+def require_token(fn):
+    """
+    Guards mutating endpoints (WoL, stop, monitor, rescan, exclude).
+    No-op unless NETSCAN_TOKEN is set, so the default loopback-only
+    setup behaves exactly as before.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if API_TOKEN and request.headers.get("X-NetScan-Token", "") != API_TOKEN:
+            return jsonify({"error": "unauthorized"}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+_IP_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
+
+def _valid_ip(ip: str) -> bool:
+    m = _IP_RE.match(ip)
+    return bool(m) and all(0 <= int(o) <= 255 for o in m.groups())
 
 # ── Global state ──────────────────────────────────────────────────────────────
 _state = {
@@ -70,6 +105,7 @@ def stats():
 
 # ── Stop ──────────────────────────────────────────────────────────────────────
 @app.route("/api/stop", methods=["POST"])
+@require_token
 def stop():
     _stop_event.set()
     return jsonify({"ok": True})
@@ -99,6 +135,54 @@ def known():
 def changes():
     return jsonify(db.get_changes())
 
+# ── Excluded / muted hosts ────────────────────────────────────────────────────
+@app.route("/api/excluded")
+def excluded_list():
+    return jsonify(sorted(db.get_excluded_ips()))
+
+@app.route("/api/exclude", methods=["POST"])
+@require_token
+def exclude_host():
+    data = request.get_json() or {}
+    ip = data.get("ip", "").strip()
+    if not _valid_ip(ip):
+        return jsonify({"error": "invalid ip"}), 400
+    excluded = bool(data.get("excluded", True))
+    db.set_excluded(ip, excluded)
+    return jsonify({"ok": True, "ip": ip, "excluded": excluded})
+
+# ── Single-host rescan ────────────────────────────────────────────────────────
+@app.route("/api/rescan")
+@require_token
+def rescan():
+    """Re-fingerprint a single host without re-running the whole subnet sweep."""
+    global _last_results
+    ip = request.args.get("ip", "").strip()
+    if not _valid_ip(ip):
+        return jsonify({"error": "invalid ip"}), 400
+    deep = request.args.get("deep", "0") == "1"
+
+    res = ping(ip)
+    if not res["alive"]:
+        return jsonify({"error": "unreachable", "ip": ip})
+
+    lat = _measure_latency(ip)
+    fp  = fingerprint(ip, res["ttl"])
+    row = _enrich_for_ui(fp, lat)
+    if deep:
+        row = enrichment.enrich_host(row)
+
+    db.touch_known_host(ip, row)
+
+    for i, h in enumerate(_last_results):
+        if h["ip"] == ip:
+            _last_results[i] = row
+            break
+    else:
+        _last_results.append(row)
+
+    return jsonify(row)
+
 # ── Traceroute ────────────────────────────────────────────────────────────────
 @app.route("/api/traceroute")
 def traceroute():
@@ -110,6 +194,7 @@ def traceroute():
 
 # ── Wake on LAN ───────────────────────────────────────────────────────────────
 @app.route("/api/wol", methods=["POST"])
+@require_token
 def wol():
     data = request.get_json() or {}
     mac  = data.get("mac", "")
@@ -141,6 +226,7 @@ def monitor_status():
     })
 
 @app.route("/api/monitor/start", methods=["POST"])
+@require_token
 def monitor_start():
     global _monitor_thread
     data     = request.get_json() or {}
@@ -158,6 +244,7 @@ def monitor_start():
     return jsonify({"ok": True, "interval": interval})
 
 @app.route("/api/monitor/stop", methods=["POST"])
+@require_token
 def monitor_stop_route():
     _monitor_stop.set()
     return jsonify({"ok": True})
@@ -229,80 +316,86 @@ def scan_stream():
         _state["scan_id"] = scan_id
         ips = [f"{subnet}.{i}" for i in range(0, end + 1)]
 
-        yield sse("start", {"subnet": subnet, "total": len(ips),
-                             "scan_id": scan_id, "ts": now()})
+        # Everything below runs inside try/finally: if the client
+        # disconnects mid-scan, Flask raises GeneratorExit at whichever
+        # `yield` is in flight. Without this, _state["scanning"] stayed
+        # True forever and no new scan could start until the process
+        # was restarted.
+        try:
+            yield sse("start", {"subnet": subnet, "total": len(ips),
+                                 "scan_id": scan_id, "ts": now()})
 
-        # ── Phase 1: parallel ping ───────────────────────────────────────────
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        alive   = []
-        scanned = 0
+            # ── Phase 1: parallel ping ───────────────────────────────────────
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            alive   = []
+            scanned = 0
 
-        with ThreadPoolExecutor(max_workers=60) as ex:
-            futures = {ex.submit(ping, ip): ip for ip in ips}
-            for fut in as_completed(futures):
+            with ThreadPoolExecutor(max_workers=60) as ex:
+                futures = {ex.submit(ping, ip): ip for ip in ips}
+                for fut in as_completed(futures):
+                    if _stop_event.is_set():
+                        break
+                    res = fut.result()
+                    scanned += 1
+                    _state["scanned"] = scanned
+                    yield sse("ping", {
+                        "ip":      res["ip"],
+                        "alive":   res["alive"],
+                        "ttl":     res["ttl"],
+                        "scanned": scanned,
+                        "total":   len(ips),
+                    })
+                    if res["alive"]:
+                        alive.append(res)
+
+            if _stop_event.is_set():
+                yield sse("stopped", {"msg": "Scan stopped"})
+                return
+
+            alive.sort(key=lambda x: int(x["ip"].split(".")[-1]))
+            yield sse("phase2", {"count": len(alive), "deep": deep})
+
+            # ── Phase 2: fingerprint + optional deep enrichment ──────────────
+            results = []
+            for i, host in enumerate(alive, 1):
                 if _stop_event.is_set():
                     break
-                res = fut.result()
-                scanned += 1
-                _state["scanned"] = scanned
-                yield sse("ping", {
-                    "ip":      res["ip"],
-                    "alive":   res["alive"],
-                    "ttl":     res["ttl"],
-                    "scanned": scanned,
-                    "total":   len(ips),
-                })
-                if res["alive"]:
-                    alive.append(res)
+                ip, ttl = host["ip"], host["ttl"]
+                lat = _measure_latency(ip)
+                fp  = fingerprint(ip, ttl)
+                row = _enrich_for_ui(fp, lat)
 
-        if _stop_event.is_set():
+                if deep:
+                    yield sse("enriching", {"ip": ip, "step": i, "total": len(alive)})
+                    row = enrichment.enrich_host(row)
+
+                results.append(row)
+                _last_results.append(row)
+                _state["hosts_found"] = len(results)
+
+                # Persist to DB
+                db.save_host(scan_id, row)
+
+                yield sse("host", row)
+
+            # ── Change detection ──────────────────────────────────────────────
+            changes = db.detect_changes(scan_id, results)
+            if changes:
+                yield sse("changes", {"changes": changes})
+                _fire_webhook(changes, subnet)
+
+            total_ports = sum(len(r.get("ports", {})) for r in results)
+            db.finish_scan(scan_id, len(results), total_ports)
+
+            yield sse("done", {
+                "hosts":       len(results),
+                "total_ports": total_ports,
+                "changes":     len(changes),
+                "scan_id":     scan_id,
+                "ts":          now(),
+            })
+        finally:
             _state["scanning"] = False
-            yield sse("stopped", {"msg": "Scan stopped"})
-            return
-
-        alive.sort(key=lambda x: int(x["ip"].split(".")[-1]))
-        yield sse("phase2", {"count": len(alive), "deep": deep})
-
-        # ── Phase 2: fingerprint + optional deep enrichment ──────────────────
-        results = []
-        for i, host in enumerate(alive, 1):
-            if _stop_event.is_set():
-                break
-            ip, ttl = host["ip"], host["ttl"]
-            lat = _measure_latency(ip)
-            fp  = fingerprint(ip, ttl)
-            row = _enrich_for_ui(fp, lat)
-
-            if deep:
-                yield sse("enriching", {"ip": ip, "step": i, "total": len(alive)})
-                row = enrichment.enrich_host(row)
-
-            results.append(row)
-            _last_results.append(row)
-            _state["hosts_found"] = len(results)
-
-            # Persist to DB
-            db.save_host(scan_id, row)
-
-            yield sse("host", row)
-
-        # ── Change detection ─────────────────────────────────────────────────
-        changes = db.detect_changes(scan_id, results)
-        if changes:
-            yield sse("changes", {"changes": changes})
-            _fire_webhook(changes, subnet)
-
-        total_ports = sum(len(r.get("ports", {})) for r in results)
-        db.finish_scan(scan_id, len(results), total_ports)
-
-        _state["scanning"] = False
-        yield sse("done", {
-            "hosts":       len(results),
-            "total_ports": total_ports,
-            "changes":     len(changes),
-            "scan_id":     scan_id,
-            "ts":          now(),
-        })
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache",
@@ -436,14 +529,20 @@ def _fire_webhook(changes: list[dict], subnet: str):
 
 # ── Entry ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = 5000
+    token_note = "required (X-NetScan-Token header)" if API_TOKEN else "off — set NETSCAN_TOKEN to enable"
+    lan_note   = "" if HOST == "127.0.0.1" else "  (reachable from your LAN)"
     print(f"""
   ╔════════════════════════════════════════════╗
-  ║        NetScan   →  http://localhost:{port}   ║
+  ║  NetScan v2  →  http://{HOST}:{PORT}
   ╠════════════════════════════════════════════╣
-  ║  DB       : netscan.db                     ║
-  ║  Deep scan: ?deep=1 on /api/scan            ║
-  ║  Monitor  : POST /api/monitor/start         ║
+  ║  DB        : netscan.db
+  ║  Bind      : {HOST}:{PORT}{lan_note}
+  ║  API token : {token_note}
+  ║  Deep scan : ?deep=1 on /api/scan
+  ║  Rescan    : GET  /api/rescan?ip=x.x.x.x
+  ║  Exclude   : POST /api/exclude {{"ip":..,"excluded":true}}
+  ║  Monitor   : POST /api/monitor/start
   ╚════════════════════════════════════════════╝
+  Set NETSCAN_HOST=0.0.0.0 to allow LAN access.
 """)
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    app.run(host=HOST, port=PORT, debug=False, threaded=True)

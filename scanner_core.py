@@ -9,7 +9,7 @@ For every live host, fingerprints:
   • Device type    (inferred from open ports + hostname keywords)
 """
 
-import subprocess, platform, socket, re, os
+import subprocess, platform, socket, re, os, csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
@@ -57,38 +57,110 @@ COMMON_PORTS  = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-# ── MAC vendor prefix table (top OUIs for common LAN gear) ────────────────────
+# ── MAC vendor prefix table (curated — common LAN, IoT, and consumer gear) ────
+# Best-effort hand-curated subset. For comprehensive, authoritative coverage,
+# download the full IEEE MA-L OUI registry from:
+#     https://standards-oui.ieee.org/oui/oui.csv
+# and save it as "oui.csv" next to this script — it's loaded automatically
+# below and merged in, with the curated names here taking priority.
 OUI_TABLE = {
+    # Virtualization / hypervisors
     "00:50:56": "VMware",       "00:0c:29": "VMware",       "00:1c:42": "Parallels",
-    "08:00:27": "VirtualBox",   "52:54:00": "QEMU/KVM",
+    "08:00:27": "VirtualBox",   "52:54:00": "QEMU/KVM",     "00:16:3e": "Xen",
+
+    # Raspberry Pi
     "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+
+    # Apple
     "28:cd:c1": "Apple",        "f0:18:98": "Apple",        "3c:22:fb": "Apple",
-    "ac:de:48": "Apple",        "00:1a:11": "Google",       "f4:f5:d8": "Google",
-    "54:60:09": "Google",       "94:b4:0f": "Google",
-    "00:17:88": "Philips Hue",  "ec:b5:fa": "Philips Hue",
+    "ac:de:48": "Apple",
+
+    # Google / Nest
+    "00:1a:11": "Google",       "f4:f5:d8": "Google",       "54:60:09": "Google",
+    "94:b4:0f": "Google",
     "18:b4:30": "Nest/Google",  "64:16:66": "Nest/Google",
+
+    # Amazon
     "b0:34:95": "Amazon Echo",  "fc:65:de": "Amazon Echo",  "68:37:e9": "Amazon Echo",
+
+    # Samsung
+    "5c:0a:5b": "Samsung",      "8c:77:12": "Samsung",      "bc:14:85": "Samsung",
+
+    # Smart home / IoT
+    "00:17:88": "Philips Hue",  "ec:b5:fa": "Philips Hue",
+    "5c:aa:fd": "Sonos",        "00:0e:58": "Sonos",
+    "94:10:3e": "Belkin/Wemo",  "ec:1a:59": "Belkin/Wemo",
+    "b8:3e:59": "Roku",         "dc:3a:5e": "Roku",
+    "00:19:fb": "Vizio",
+    "24:6f:28": "Espressif (ESP32/ESP8266 IoT)",
+    "24:0a:c4": "Espressif (ESP32/ESP8266 IoT)",
+    "30:ae:a4": "Espressif (ESP32/ESP8266 IoT)",
+    "84:cc:a8": "Espressif (ESP32/ESP8266 IoT)",
+
+    # Mobile devices
+    "64:09:80": "Xiaomi",       "f0:b4:29": "Xiaomi",       "00:e0:fc": "Huawei",
+    "10:68:3f": "LG Electronics",
+
+    # Game consoles
+    "00:50:f2": "Microsoft",    "00:13:a9": "Sony",
+    "00:09:bf": "Nintendo",     "00:1f:32": "Nintendo",
+
+    # Networking
     "cc:9e:a2": "Ubiquiti",     "04:18:d6": "Ubiquiti",     "f4:92:bf": "Ubiquiti",
+    "00:1f:16": "Netgear",      "20:4e:7f": "Netgear",
+    "c0:ff:d4": "TP-Link",      "50:c7:bf": "TP-Link",      "b0:be:76": "TP-Link",
+    "74:da:38": "Edimax",
+    "00:18:e7": "Cisco",        "00:1e:14": "Cisco",        "58:97:bd": "Cisco",
+    "00:13:d4": "D-Link",       "1c:7e:e5": "D-Link",
+    "00:0c:42": "MikroTik",     "4c:5e:0c": "ASUS",
+
+    # PCs / servers / NAS
     "00:30:48": "Supermicro",   "ac:1f:6b": "Supermicro",
     "00:26:b9": "Dell",         "14:18:77": "Dell",         "f8:db:88": "Dell",
-    "00:1b:21": "Intel NIC",    "8c:ec:4b": "Intel NIC",    "00:1f:16": "Netgear",
-    "20:4e:7f": "Netgear",      "c0:ff:d4": "TP-Link",      "50:c7:bf": "TP-Link",
-    "b0:be:76": "TP-Link",      "74:da:38": "Edimax",
-    "00:18:e7": "Cisco",        "00:1e:14": "Cisco",        "58:97:bd": "Cisco",
-    "00:e0:4c": "Realtek",      "00:13:d4": "D-Link",       "1c:7e:e5": "D-Link",
+    "00:1b:21": "Intel NIC",    "8c:ec:4b": "Intel NIC",
+    "00:e0:4c": "Realtek",
     "f8:1a:67": "HP",           "3c:d9:2b": "HP",           "00:21:5a": "HP",
     "b8:ac:6f": "HP",
+    "00:11:32": "Synology",
 }
 
+
+def _load_ieee_oui(filename: str = "oui.csv") -> dict[str, str]:
+    """
+    Optionally load the full IEEE MA-L OUI registry for comprehensive vendor
+    lookups (~35k entries). Download once from:
+        https://standards-oui.ieee.org/oui/oui.csv
+    and place it next to this script as 'oui.csv'. Returns {} if not found,
+    so this stays fully optional and works offline either way.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    table: dict[str, str] = {}
+    if not os.path.exists(path):
+        return table
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                assignment = (row.get("Assignment") or "").strip().upper()
+                org = (row.get("Organization Name") or "").strip()
+                if len(assignment) == 6 and org:
+                    prefix = ":".join(assignment[i:i + 2] for i in range(0, 6, 2))
+                    table[prefix] = org
+    except Exception:
+        pass
+    return table
+
+
+# Merge: full IEEE registry (if oui.csv is present) as the base, with the
+# curated OUI_TABLE above taking priority for friendlier, more specific names.
+_OUI_LOOKUP: dict[str, str] = _load_ieee_oui()
+_OUI_LOOKUP.update({k.upper(): v for k, v in OUI_TABLE.items()})
+
+
 def oui_vendor(mac: str) -> str:
-    """Look up vendor from first 3 MAC octets."""
+    """Look up vendor from the first 3 octets of a MAC address (O(1))."""
     if not mac:
         return "Unknown"
-    prefix = mac[:8].upper()
-    for oui, vendor in OUI_TABLE.items():
-        if oui.upper() == prefix:
-            return vendor
-    return "Unknown"
+    return _OUI_LOOKUP.get(mac[:8].upper(), "Unknown")
 
 
 # ── Ping ──────────────────────────────────────────────────────────────────────
@@ -276,6 +348,7 @@ def main():
     print(f"  Subnet Scanner + Fingerprint — {SUBNET}.{START}–{SUBNET}.{END}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Threads : {MAX_WORKERS}  |  Ping timeout : {PING_TIMEOUT}s  |  Port timeout : {PORT_TIMEOUT}s")
+    print(f" OUI table : {len(_OUI_LOOKUP)} entries {'(full IEEE registry loaded)' if len(_OUI_LOOKUP) > len(OUI_TABLE) else '(curated subset)'}")
     print("=" * 60)
     print("  Phase 1 — Pinging all hosts …\n")
 

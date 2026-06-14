@@ -1,0 +1,31 @@
+# ── Runtime data (generated, not source) ──────────────────────────────────────
+netscan.db
+netscan.db-wal
+netscan.db-shm
+netscan.db-journal
+
+# Optional full IEEE OUI registry (~35k rows, third-party download)
+# https://standards-oui.ieee.org/oui/oui.csv
+oui.csv
+
+# Local env / secrets (e.g. NETSCAN_TOKEN, NETSCAN_HOST overrides)
+.env
+*.local
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── Logs ───────────────────────────────────────────────────────────────────────
+*.log
+
+# ── Editor / OS cruft ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
