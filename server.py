@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-server.py — NetScan v2 Flask backend
+server.py — NetScan Flask backend
 All endpoints served from http://localhost:5000
 
 SSE scan stream   GET  /api/scan?subnet=192.168.1&end=255

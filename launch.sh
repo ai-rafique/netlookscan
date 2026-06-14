@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# NetScan v2 — setup and launch
+# NetScan — setup and launch
 set -e
 cd "$(dirname "$0")"
 echo ""
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║         NetScan v2 — Setup & Launch       ║"
+echo "  ║         NetScan — Setup & Launch       ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo ""
 echo "  → Checking dependencies..."
