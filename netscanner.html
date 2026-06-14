@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NetScan v2</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0c0f;--bg2:#0f1216;--bg3:#151921;
+  --panel:#1a1f28;--panel2:#1e2530;--panel3:#222b38;
+  --border:#252e3d;--border2:#2e3d52;--border3:#3a4d68;
+  --accent:#00e5a0;--accent2:#00b87c;--adim:rgba(0,229,160,.12);--aglow:rgba(0,229,160,.3);
+  --text:#dde5f0;--text2:#8fa0b8;--text3:#4a5a6e;--text4:#2e3d52;
+  --red:#ff4d6a;--amber:#f0a500;--blue:#4a9eff;--purple:#a78bfa;--pink:#f472b6;
+  --mono:'JetBrains Mono',monospace;--sans:'Space Grotesk',sans-serif;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;overflow:hidden}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ── APP SHELL ── */
+#app{display:grid;grid-template-rows:52px 1fr;height:100vh}
+#main{display:grid;grid-template-columns:52px 260px 1fr 320px;overflow:hidden}
+
+/* ── ICON NAV ── */
+#nav{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:4px}
+.nav-btn{width:36px;height:36px;border-radius:8px;border:none;background:transparent;color:var(--text3);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:all .15s;position:relative}
+.nav-btn:hover{background:var(--panel);color:var(--text2)}
+.nav-btn.active{background:var(--adim);color:var(--accent)}
+.nav-btn .badge{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;background:var(--red)}
+.nav-sep{width:24px;height:1px;background:var(--border);margin:4px 0}
+
+/* ── LEFT PANEL (tabs) ── */
+#left-panel{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.lp-content{display:none;flex:1;overflow:hidden;flex-direction:column}
+.lp-content.active{display:flex}
+.lp-header{padding:14px 16px 10px;font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--border);flex-shrink:0}
+
+/* summary stats */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);flex-shrink:0}
+.stat-cell{background:var(--bg2);padding:12px 14px}
+.stat-val{font-size:22px;font-weight:600;font-family:var(--mono)}
+.stat-val.g{color:var(--accent)}.stat-val.a{color:var(--amber)}.stat-val.r{color:var(--red)}.stat-val.b{color:var(--blue)}
+.stat-lbl{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin-top:2px}
+
+/* type breakdown */
+.type-list{padding:8px 12px;flex-shrink:0}
+.type-row{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;cursor:pointer;transition:background .1s}
+.type-row:hover,.type-row.on{background:var(--panel)}
+.type-row.on .type-name{color:var(--text)}
+.t-ico{width:26px;height:26px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.type-name{flex:1;font-size:12px;color:var(--text2)}
+.type-cnt{font-family:var(--mono);font-size:11px;color:var(--text3)}
+
+/* scan log */
+.log-scroll{flex:1;overflow-y:auto;padding:4px 0}
+.log-line{padding:2px 14px;font-family:var(--mono);font-size:10px;color:var(--text3);line-height:1.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.log-line.up{color:var(--accent)}.log-line.probe{color:var(--amber)}.log-line.info{color:var(--blue)}.log-line.err{color:var(--red)}.log-line.warn{color:var(--amber)}
+
+/* history list */
+.hist-item{display:flex;flex-direction:column;gap:3px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.hist-item:hover{background:var(--panel)}
+.hist-item.active{background:var(--panel);border-left:2px solid var(--accent)}
+.hist-date{font-family:var(--mono);font-size:11px;color:var(--text2)}
+.hist-sub{font-size:10px;color:var(--text3)}
+.hist-pills{display:flex;gap:4px;margin-top:3px}
+.hp{font-size:9px;padding:1px 6px;border-radius:3px;font-family:var(--mono)}
+.hp.g{background:rgba(0,229,160,.12);color:var(--accent)}.hp.a{background:rgba(240,165,0,.12);color:var(--amber)}.hp.r{background:rgba(255,77,106,.12);color:var(--red)}
+
+/* changes list */
+.change-item{padding:8px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px}
+.change-type{font-size:9px;padding:2px 6px;border-radius:3px;font-family:var(--mono);white-space:nowrap;align-self:flex-start;margin-top:1px}
+.ct-new_host{background:rgba(0,229,160,.12);color:var(--accent)}
+.ct-lost_host{background:rgba(255,77,106,.12);color:var(--red)}
+.ct-new_port{background:rgba(240,165,0,.12);color:var(--amber)}
+.ct-closed_port{background:rgba(74,154,255,.12);color:var(--blue)}
+.change-detail{font-size:11px;color:var(--text2);line-height:1.5}
+.change-time{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:2px}
+
+/* known hosts */
+.known-item{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.known-item:hover{background:var(--panel)}
+.k-ip{font-family:var(--mono);font-size:12px;color:var(--text);width:110px;flex-shrink:0}
+.k-info{flex:1;min-width:0}
+.k-host{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.k-last{font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* ── TOPBAR ── */
+#topbar{display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--bg2);border-bottom:1px solid var(--border);grid-column:1/-1}
+.logo{display:flex;align-items:center;gap:7px;font-size:14px;font-weight:600;letter-spacing:.03em;margin-right:4px}
+.ld{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.dvd{width:1px;height:22px;background:var(--border);margin:0 2px}
+#subnet-in{font-family:var(--mono);font-size:12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:5px;width:148px;outline:none}
+#subnet-in:focus{border-color:var(--accent)}
+#range-sel{font-family:var(--mono);font-size:12px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);padding:5px 8px;border-radius:5px;outline:none}
+#deep-chk-wrap{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text3);cursor:pointer;user-select:none}
+#deep-chk-wrap input{accent-color:var(--accent)}
+.tb-btn{display:flex;align-items:center;gap:5px;font-family:var(--sans);font-size:12px;font-weight:500;padding:5px 14px;border-radius:5px;cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2);transition:all .15s;white-space:nowrap}
+.tb-btn:hover{border-color:var(--border2);color:var(--text)}
+.tb-btn.primary{background:var(--accent);border-color:var(--accent);color:#000;font-weight:600}
+.tb-btn.primary:hover{background:#00ffb0;box-shadow:0 0 14px var(--aglow)}
+.tb-btn.danger{border-color:var(--red);color:var(--red)}
+.tb-btn.danger:hover{background:rgba(255,77,106,.1)}
+#status-chip{margin-left:auto;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--text3)}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--text3)}
+.sdot.live{background:var(--accent);animation:blink 1.2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ── CENTER ── */
+#center{display:flex;flex-direction:column;overflow:hidden}
+#progbar-wrap{height:48px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 18px;flex-shrink:0;position:relative;overflow:hidden}
+.sweep{position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(0,229,160,.04),transparent);transform:translateX(-100%)}
+.sweep.on{animation:sweep 2.2s linear infinite}
+@keyframes sweep{to{transform:translateX(200%)}}
+#prog-ip{font-family:var(--mono);font-size:11px;color:var(--text3);width:120px;flex-shrink:0}
+#prog-track{flex:1;height:2px;background:var(--border);border-radius:2px;overflow:hidden}
+#prog-fill{height:100%;width:0%;background:var(--accent);transition:width .12s linear;border-radius:2px}
+#prog-pct{font-family:var(--mono);font-size:11px;color:var(--accent);width:34px;text-align:right}
+
+#filter-bar{display:flex;align-items:center;gap:7px;padding:9px 18px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+#search-in{font-family:var(--mono);font-size:12px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:5px;outline:none;width:170px}
+#search-in:focus{border-color:var(--accent)}
+.fchip{font-size:11px;padding:3px 9px;border-radius:4px;border:1px solid var(--border);color:var(--text3);cursor:pointer;user-select:none;font-family:var(--mono);transition:all .1s}
+.fchip:hover{border-color:var(--border2);color:var(--text2)}
+.fchip.on{background:var(--adim);border-color:var(--accent);color:var(--accent)}
+.fdvd{width:1px;height:18px;background:var(--border);margin:0 2px}
+.view-tog{display:flex;gap:3px;margin-left:auto}
+.vbtn{padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text3);cursor:pointer;font-size:13px;transition:all .1s}
+.vbtn:hover{color:var(--text2)}.vbtn.on{background:var(--panel2);border-color:var(--border2);color:var(--text)}
+
+#host-area{flex:1;overflow-y:auto;padding:14px 18px}
+#host-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:9px}
+#host-grid.list{grid-template-columns:1fr}
+#empty{display:none;padding:50px;text-align:center;color:var(--text3);font-size:13px}
+#empty .ei{font-size:36px;opacity:.25;margin-bottom:10px}
+
+/* ── HOST CARD ── */
+.hcard{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:13px;cursor:pointer;transition:border-color .15s,background .15s;position:relative;overflow:hidden}
+.hcard::before{content:'';position:absolute;left:0;top:0;width:2px;height:100%;background:var(--accent);opacity:0;transition:opacity .2s}
+.hcard:hover{border-color:var(--border2);background:var(--panel2)}
+.hcard.sel{border-color:var(--accent);background:var(--panel2)}
+.hcard.sel::before{opacity:1}
+.hcard.new{animation:pop .28s cubic-bezier(.34,1.56,.64,1)}
+@keyframes pop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
+.hcard-top{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.hcard-ico{width:32px;height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.hcard-ip{font-family:var(--mono);font-size:13px;font-weight:500}
+.hcard-host{font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;max-width:120px}
+.hcard-bdg{margin-left:auto;font-size:9px;padding:2px 6px;border-radius:3px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;flex-shrink:0}
+.hcard-ports{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:7px}
+.ptag{font-family:var(--mono);font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(74,154,255,.1);color:var(--blue);border:1px solid rgba(74,154,255,.2)}
+.ptag.ssh{background:rgba(0,229,160,.1);color:var(--accent);border-color:rgba(0,229,160,.2)}
+.ptag.rdp{background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.2)}
+.ptag.mqtt{background:rgba(240,165,0,.1);color:var(--amber);border-color:rgba(240,165,0,.2)}
+.ptag.print{background:rgba(255,77,106,.1);color:var(--red);border-color:rgba(255,77,106,.2)}
+.ptag.telnet{background:rgba(255,77,106,.2);color:var(--red);border-color:rgba(255,77,106,.4)}
+.hcard-meta{display:flex;justify-content:space-between;align-items:center}
+.hcard-os{font-size:10px;color:var(--text3)}
+.hcard-lat{font-family:var(--mono);font-size:10px;color:var(--accent)}
+.hcard-cve{position:absolute;top:8px;right:8px;font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(255,77,106,.15);color:var(--red);font-family:var(--mono);font-weight:600}
+.risk-stripe{position:absolute;bottom:0;left:0;height:2px;border-radius:0 0 8px 8px}
+/* list mode */
+#host-grid.list .hcard{border-radius:4px;padding:9px 13px}
+#host-grid.list .hcard-top{margin-bottom:0}
+#host-grid.list .hcard-ports,.hcard-meta{display:none}
+#host-grid.list .hcard.sel::before{height:100%}
+
+/* ── RIGHT PANEL (detail) ── */
+#right-panel{background:var(--bg2);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.dp-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--text3);font-size:12px;text-align:center;padding:20px;opacity:.5}
+#dp{display:none;flex-direction:column;flex:1;overflow:hidden}
+#dp.vis{display:flex}
+.dp-hdr{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:11px;flex-shrink:0}
+.dp-ico{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.dp-ip{font-family:var(--mono);font-size:15px;font-weight:500}
+.dp-host{font-size:11px;color:var(--text3);margin-top:1px}
+.dp-badge{margin-top:4px;display:inline-block;font-size:9px;padding:2px 7px;border-radius:3px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.dp-x{margin-left:auto;background:none;border:1px solid var(--border);color:var(--text3);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px}
+.dp-x:hover{color:var(--text)}
+.dp-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.dp-tab{flex:1;padding:8px 4px;font-size:11px;color:var(--text3);cursor:pointer;text-align:center;border-bottom:2px solid transparent;transition:all .15s}
+.dp-tab:hover{color:var(--text2)}.dp-tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.dp-body{flex:1;overflow-y:auto;padding:12px 14px}
+.dp-section{margin-bottom:14px}
+.dp-stitle{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;font-weight:600;margin-bottom:7px}
+.dp-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(37,46,61,.6)}
+.dp-row:last-child{border:none}
+.dp-k{font-size:11px;color:var(--text3)}.dp-v{font-family:var(--mono);font-size:11px;color:var(--text);text-align:right;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dp-v.g{color:var(--accent)}.dp-v.a{color:var(--amber)}.dp-v.r{color:var(--red)}.dp-v.b{color:var(--blue)}
+.port-grid2{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.dp-port{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:5px 8px}
+.dp-pnum{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text)}
+.dp-psvc{font-size:9px;color:var(--text3);margin-top:1px}
+.dp-port.ssh .dp-pnum{color:var(--accent)}.dp-port.rdp .dp-pnum{color:var(--purple)}.dp-port.web .dp-pnum{color:var(--blue)}.dp-port.mqtt .dp-pnum{color:var(--amber)}.dp-port.print .dp-pnum{color:var(--red)}.dp-port.telnet .dp-pnum{color:var(--red)}
+.risk-meter{display:flex;gap:3px;margin-top:6px}
+.rseg{flex:1;height:4px;border-radius:2px;background:var(--border)}
+.rseg.on.g{background:var(--accent)}.rseg.on.a{background:var(--amber)}.rseg.on.r{background:var(--red)}
+.finding{display:flex;align-items:flex-start;gap:6px;padding:5px 0;border-bottom:1px solid var(--border)}
+.finding:last-child{border:none}
+.finding-dot{width:5px;height:5px;border-radius:50%;background:var(--amber);margin-top:4px;flex-shrink:0}
+.finding-dot.r{background:var(--red)}.finding-dot.g{background:var(--accent)}
+.finding-txt{font-size:11px;color:var(--text2)}
+.cve-item{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:8px 10px;margin-bottom:5px}
+.cve-top{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.cve-id{font-family:var(--mono);font-size:11px;font-weight:500;color:var(--blue)}
+.cve-score{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600}
+.sev-CRITICAL{background:rgba(255,77,106,.2);color:var(--red)}.sev-HIGH{background:rgba(240,165,0,.2);color:var(--amber)}.sev-MEDIUM{background:rgba(74,154,255,.2);color:var(--blue)}.sev-LOW{background:rgba(0,229,160,.12);color:var(--accent)}
+.cve-desc{font-size:10px;color:var(--text3);line-height:1.5}
+.banner-box{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:7px 9px;font-family:var(--mono);font-size:10px;color:var(--text2);word-break:break-all;line-height:1.6;margin-bottom:5px}
+.banner-lbl{font-size:9px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.08em}
+.trace-hop{display:flex;align-items:center;gap:10px;padding:4px 0;border-bottom:1px solid var(--border)}
+.trace-n{font-family:var(--mono);font-size:10px;color:var(--text3);width:18px}
+.trace-ip{font-family:var(--mono);font-size:11px;color:var(--text);flex:1}
+.trace-ms{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.dp-actions{padding:12px 14px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:5px;flex-shrink:0}
+.dpa{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:5px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer;font-size:11px;transition:all .15s}
+.dpa:hover{border-color:var(--accent);color:var(--accent);background:var(--adim)}
+.dpa .di{font-size:14px;width:16px;text-align:center}
+
+/* ── TOPOLOGY MAP ── */
+#topo-wrap{display:none;position:absolute;inset:0;background:var(--bg);z-index:50}
+#topo-wrap.vis{display:flex;flex-direction:column}
+#topo-bar{display:flex;align-items:center;gap:12px;padding:0 18px;height:48px;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+#topo-canvas{flex:1}
+svg text{font-family:var(--mono)}
+
+/* ── MODAL ── */
+#modal-wrap{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center}
+#modal-wrap.vis{display:flex}
+#modal{background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:22px;min-width:360px;max-width:480px;width:90%}
+.modal-title{font-size:15px;font-weight:600;margin-bottom:14px}
+.modal-label{font-size:11px;color:var(--text3);margin-bottom:5px;display:block}
+.modal-input{width:100%;font-family:var(--mono);font-size:12px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:5px;outline:none;margin-bottom:12px}
+.modal-input:focus{border-color:var(--accent)}
+.modal-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:18px;right:18px;background:var(--panel);border:1px solid var(--border2);border-radius:6px;padding:9px 14px;font-size:12px;color:var(--text);display:none;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:200}
+#toast.show{display:flex;animation:ti .2s ease}
+@keyframes ti{from{opacity:0;transform:translateY(5px)}}
+.tdot{width:6px;height:6px;border-radius:50%}
+
+/* ── DEEPSCAN OVERLAY ── */
+#ds-wrap{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:120;align-items:center;justify-content:center}
+#ds-wrap.vis{display:flex}
+#ds-box{background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:22px;width:420px}
+#ds-title{font-size:14px;font-weight:600;margin-bottom:14px}
+#ds-progress{height:2px;background:var(--border);border-radius:2px;margin-bottom:12px;overflow:hidden}
+#ds-bar{height:100%;background:var(--accent);width:0%;transition:width .1s linear}
+#ds-ports{max-height:200px;overflow-y:auto;font-family:var(--mono);font-size:11px}
+.ds-port{padding:3px 0;display:flex;gap:10px;border-bottom:1px solid var(--border)}
+.ds-port:last-child{border:none}
+.ds-pnum{color:var(--accent);width:50px}
+.ds-psvc{color:var(--text2)}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="topbar">
+  <div class="logo"><div class="ld"></div>NetScan <span style="font-size:10px;color:var(--text3);font-family:var(--mono)">v1.0</span></div>
+  <div class="dvd"></div>
+  <input id="subnet-in" value="192.168.1" spellcheck="false" placeholder="subnet"/>
+  <select id="range-sel">
+    <option value="255">/24 — 256 hosts</option>
+    <option value="127">/25 — 128 hosts</option>
+    <option value="63">/26 — 64 hosts</option>
+  </select>
+  <label id="deep-chk-wrap" title="Grab banners, SNMP, NetBIOS, CVEs (slower)">
+    <input type="checkbox" id="deep-chk"/> Deep scan
+  </label>
+  <button class="tb-btn primary" id="scan-btn" onclick="toggleScan()">▶ Scan</button>
+  <button class="tb-btn" onclick="showTopo()">🗺 Map</button>
+  <button class="tb-btn" onclick="exportJSON()">⬇ Export</button>
+  <button class="tb-btn" onclick="showModal('webhook')">🔔 Webhook</button>
+  <button class="tb-btn" onclick="showModal('monitor')">⏱ Monitor</button>
+  <div class="dvd"></div>
+  <div id="status-chip"><div class="sdot" id="sdot"></div><span id="stxt">idle</span></div>
+</div>
+
+<div id="main">
+<!-- NAV -->
+<div id="nav">
+  <button class="nav-btn active" data-panel="summary" onclick="switchPanel(this)" title="Summary">⊞</button>
+  <button class="nav-btn" data-panel="log" onclick="switchPanel(this)" title="Scan Log">≡</button>
+  <button class="nav-btn" data-panel="history" onclick="switchPanel(this)" title="History">🕓</button>
+  <button class="nav-btn" data-panel="changes" onclick="switchPanel(this)" title="Changes" id="nav-changes" title="Changes">△</button>
+  <button class="nav-btn" data-panel="known" onclick="switchPanel(this)" title="Known Hosts">◉</button>
+</div>
+
+<!-- LEFT PANEL -->
+<div id="left-panel">
+  <!-- SUMMARY -->
+  <div class="lp-content active" id="panel-summary">
+    <div class="lp-header">Network summary</div>
+    <div class="stat-grid">
+      <div class="stat-cell"><div class="stat-val" id="st-scanned">0</div><div class="stat-lbl">Scanned</div></div>
+      <div class="stat-cell"><div class="stat-val g" id="st-up">0</div><div class="stat-lbl">Hosts up</div></div>
+      <div class="stat-cell"><div class="stat-val b" id="st-ports">0</div><div class="stat-lbl">Open ports</div></div>
+      <div class="stat-cell"><div class="stat-val a" id="st-risky">0</div><div class="stat-lbl">Exposed</div></div>
+    </div>
+    <div class="lp-header" style="margin-top:0">Device types</div>
+    <div class="type-list" id="type-list"></div>
+    <div class="lp-header" style="margin-top:auto">Quick stats</div>
+    <div style="padding:10px 14px;font-size:11px;color:var(--text3)" id="qs-wrap">
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)">
+        <span>Total scans</span><span id="qs-scans" style="font-family:var(--mono);color:var(--text2)">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)">
+        <span>Known hosts</span><span id="qs-known" style="font-family:var(--mono);color:var(--text2)">—</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0">
+        <span>Total changes</span><span id="qs-changes" style="font-family:var(--mono);color:var(--text2)">—</span>
+      </div>
+    </div>
+  </div>
+  <!-- LOG -->
+  <div class="lp-content" id="panel-log">
+    <div class="lp-header" style="display:flex;justify-content:space-between;align-items:center">
+      Scan log <span style="cursor:pointer;color:var(--text3);font-size:10px" onclick="document.getElementById('log-scroll').innerHTML=''">clear</span>
+    </div>
+    <div class="log-scroll" id="log-scroll"></div>
+  </div>
+  <!-- HISTORY -->
+  <div class="lp-content" id="panel-history">
+    <div class="lp-header">Scan history</div>
+    <div style="flex:1;overflow-y:auto" id="hist-list"></div>
+  </div>
+  <!-- CHANGES -->
+  <div class="lp-content" id="panel-changes">
+    <div class="lp-header" style="display:flex;justify-content:space-between;align-items:center">
+      Change log <span id="change-badge" style="font-family:var(--mono);font-size:10px;color:var(--amber)"></span>
+    </div>
+    <div style="flex:1;overflow-y:auto" id="changes-list"></div>
+  </div>
+  <!-- KNOWN HOSTS -->
+  <div class="lp-content" id="panel-known">
+    <div class="lp-header">Known hosts</div>
+    <div style="flex:1;overflow-y:auto" id="known-list"></div>
+  </div>
+</div>
+
+<!-- CENTER -->
+<div id="center">
+  <div id="progbar-wrap">
+    <div class="sweep" id="sweep"></div>
+    <span id="prog-ip" style="font-family:var(--mono);font-size:11px;color:var(--text3)">ready</span>
+    <div id="prog-track"><div id="prog-fill"></div></div>
+    <span id="prog-pct">0%</span>
+  </div>
+  <div id="filter-bar">
+    <input id="search-in" placeholder="search ip, hostname, vendor…" oninput="applyFilters()"/>
+    <div class="fdvd"></div>
+    <span class="fchip" data-t="router" onclick="toggleChip(this)">router</span>
+    <span class="fchip" data-t="server" onclick="toggleChip(this)">server</span>
+    <span class="fchip" data-t="windows" onclick="toggleChip(this)">windows</span>
+    <span class="fchip" data-t="iot" onclick="toggleChip(this)">iot</span>
+    <span class="fchip" data-t="printer" onclick="toggleChip(this)">printer</span>
+    <span class="fchip" data-t="mobile" onclick="toggleChip(this)">mobile</span>
+    <span class="fchip" data-t="vm" onclick="toggleChip(this)">vm</span>
+    <div class="fdvd"></div>
+    <span class="fchip" data-t="risky" onclick="toggleChip(this)" style="border-color:rgba(255,77,106,.4);color:var(--red)">⚠ risky</span>
+    <div class="view-tog">
+      <button class="vbtn on" id="vg" onclick="setView('grid')">⊞</button>
+      <button class="vbtn" id="vl" onclick="setView('list')">☰</button>
+    </div>
+  </div>
+  <div id="host-area">
+    <div id="host-grid"></div>
+    <div id="empty"><div class="ei">◎</div><p>No hosts — run a scan</p></div>
+  </div>
+</div>
+
+<!-- RIGHT PANEL (detail) -->
+<div id="right-panel">
+  <div class="dp-empty" id="dp-empty">
+    <svg width="44" height="44" viewBox="0 0 44 44" fill="none" opacity=".4">
+      <circle cx="22" cy="22" r="18" stroke="currentColor" stroke-width="1.2"/>
+      <circle cx="22" cy="22" r="7"  stroke="currentColor" stroke-width="1.2"/>
+      <line x1="22" y1="4"  x2="22" y2="15" stroke="currentColor" stroke-width="1.2"/>
+      <line x1="22" y1="29" x2="22" y2="40" stroke="currentColor" stroke-width="1.2"/>
+      <line x1="4"  y1="22" x2="15" y2="22" stroke="currentColor" stroke-width="1.2"/>
+      <line x1="29" y1="22" x2="40" y2="22" stroke="currentColor" stroke-width="1.2"/>
+    </svg>
+    <p>Select a host</p>
+  </div>
+  <div id="dp">
+    <div class="dp-hdr" id="dp-hdr"></div>
+    <div class="dp-tabs" id="dp-tabs">
+      <div class="dp-tab on" data-tab="info" onclick="switchDpTab(this)">Info</div>
+      <div class="dp-tab" data-tab="ports" onclick="switchDpTab(this)">Ports</div>
+      <div class="dp-tab" data-tab="security" onclick="switchDpTab(this)">Security</div>
+      <div class="dp-tab" data-tab="trace" onclick="switchDpTab(this)">Trace</div>
+    </div>
+    <div class="dp-body" id="dp-body"></div>
+    <div class="dp-actions" id="dp-actions"></div>
+  </div>
+</div>
+</div><!-- /main -->
+</div><!-- /app -->
+
+<!-- TOPOLOGY MAP -->
+<div id="topo-wrap">
+  <div id="topo-bar">
+    <span style="font-size:13px;font-weight:600">Network topology</span>
+    <span style="font-size:11px;color:var(--text3);margin-left:8px" id="topo-info"></span>
+    <button class="tb-btn" style="margin-left:auto" onclick="hideTopo()">✕ Close</button>
+  </div>
+  <svg id="topo-canvas"></svg>
+</div>
+
+<!-- DEEPSCAN OVERLAY -->
+<div id="ds-wrap">
+  <div id="ds-box">
+    <div id="ds-title">Deep port scan — <span id="ds-ip" style="color:var(--accent);font-family:var(--mono)"></span></div>
+    <div id="ds-progress"><div id="ds-bar"></div></div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px" id="ds-status">Starting…</div>
+    <div id="ds-ports"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="tb-btn" onclick="closeDeegscan()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-wrap">
+  <div id="modal">
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"><div class="tdot" id="tdot"></div><span id="tmsg"></span></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const API = window.location.port==='5000' ? '' : 'http://localhost:5000';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let allHosts=[], activeFilters=new Set(), scanning=false;
+let viewMode='grid', selHost=null, dpTab='info';
+let _sse=null, traceData={};
+
+// ── Nav / Panel switching ─────────────────────────────────────────────────────
+function switchPanel(btn){
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.lp-content').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-'+btn.dataset.panel).classList.add('active');
+  if(btn.dataset.panel==='history') loadHistory();
+  if(btn.dataset.panel==='changes') loadChanges();
+  if(btn.dataset.panel==='known')   loadKnown();
+}
+
+// ── Scan control ──────────────────────────────────────────────────────────────
+async function toggleScan(){
+  if(scanning){
+    try{await fetch(`${API}/api/stop`,{method:'POST'})}catch(e){}
+    return;
+  }
+  try{
+    const r=await fetch(`${API}/api/status`,{signal:AbortSignal.timeout(2000)});
+    if(!r.ok)throw new Error();
+  }catch(e){
+    toast('Cannot reach server.py — start it first','#ff4d6a');
+    addLog('ERROR: server not running','err');
+    return;
+  }
+  scanning=true; allHosts=[]; selHost=null;
+  document.getElementById('dp').classList.remove('vis');
+  document.getElementById('dp-empty').style.display='flex';
+  document.getElementById('host-grid').innerHTML='';
+  document.getElementById('empty').style.display='none';
+  document.querySelectorAll('.hcard').forEach(c=>c.classList.remove('sel'));
+
+  const subnet=document.getElementById('subnet-in').value.trim()||'192.168.1';
+  const end=document.getElementById('range-sel').value||'255';
+  const deep=document.getElementById('deep-chk').checked?'1':'0';
+
+  document.getElementById('scan-btn').textContent='■ Stop';
+  document.getElementById('scan-btn').className='tb-btn danger';
+  document.getElementById('sdot').className='sdot live';
+  document.getElementById('stxt').textContent='scanning…';
+  document.getElementById('prog-fill').className='running';
+  document.getElementById('sweep').className='sweep on';
+  document.getElementById('prog-fill').style.width='0%';
+  document.getElementById('prog-pct').textContent='0%';
+
+  addLog(`Scan starting — ${subnet}.0  deep=${deep==='1'}`,'info');
+
+  const url=`${API}/api/scan?subnet=${encodeURIComponent(subnet)}&end=${end}&deep=${deep}`;
+  _sse=new EventSource(url);
+
+  _sse.addEventListener('start',e=>{
+    const d=JSON.parse(e.data);
+    addLog(`Scan started — ${d.subnet}.0, ${d.total} hosts  [id:${d.scan_id}]`,'info');
+  });
+  _sse.addEventListener('ping',e=>{
+    const d=JSON.parse(e.data);
+    const pct=Math.round((d.scanned/d.total)*100);
+    document.getElementById('prog-fill').style.width=pct+'%';
+    document.getElementById('prog-pct').textContent=pct+'%';
+    document.getElementById('st-scanned').textContent=d.scanned;
+    document.getElementById('prog-ip').textContent=d.ip;
+    if(d.alive) addLog(`${d.ip}  PING OK  TTL=${d.ttl}`,'up');
+  });
+  _sse.addEventListener('phase2',e=>{
+    const d=JSON.parse(e.data);
+    addLog(`Phase 2 — fingerprinting ${d.count} host(s)${d.deep?' + deep enrichment':''}`,'probe');
+  });
+  _sse.addEventListener('enriching',e=>{
+    const d=JSON.parse(e.data);
+    document.getElementById('prog-ip').textContent=`enriching ${d.ip}`;
+    addLog(`Enriching ${d.ip} [${d.step}/${d.total}]`,'probe');
+  });
+  _sse.addEventListener('host',e=>{
+    const h=JSON.parse(e.data);
+    allHosts.push(h);
+    addLog(`${h.ip}  UP  ${h.label}  TTL=${h.ttlRaw}  ${h.latency}ms  ${h.vendor}`,'up');
+    renderCard(h); updateSidebar();
+    if(h.cves&&h.cves.length) addLog(`  └ ${h.cves.length} CVE(s) found for ${h.ip}`,'warn');
+    if(h.default_creds) addLog(`  └ ⚠ DEFAULT CREDS on ${h.ip}: ${h.default_creds.user}/${h.default_creds.pass}`,'err');
+  });
+  _sse.addEventListener('changes',e=>{
+    const d=JSON.parse(e.data);
+    if(d.changes.length){
+      addLog(`${d.changes.length} change(s) detected`,'warn');
+      d.changes.forEach(c=>addLog(`  └ [${c.change_type}] ${c.detail}`,'warn'));
+      document.getElementById('nav-changes').innerHTML='△<span class="badge"></span>';
+      updateChanges(d.changes);
+    }
+  });
+  _sse.addEventListener('done',e=>{
+    const d=JSON.parse(e.data);
+    finishScan(d.hosts,d.changes);
+    loadStats();
+  });
+  _sse.addEventListener('stopped',()=>finishScan(allHosts.length,0,true));
+  _sse.addEventListener('error',()=>{if(scanning)finishScan(allHosts.length,0)});
+}
+
+function finishScan(count,changes=0,stopped=false){
+  scanning=false;
+  if(_sse){_sse.close();_sse=null;}
+  document.getElementById('prog-fill').style.width='100%';
+  document.getElementById('prog-pct').textContent='100%';
+  document.getElementById('scan-btn').textContent='▶ Scan';
+  document.getElementById('scan-btn').className='tb-btn primary';
+  document.getElementById('sdot').className='sdot';
+  document.getElementById('stxt').textContent='idle';
+  document.getElementById('sweep').className='sweep';
+  if(!stopped){
+    addLog(`Done — ${count} host(s)${changes?' · '+changes+' change(s)':''}`,'info');
+    toast(`Scan complete — ${count} hosts${changes?' · '+changes+' changes':''}`,'#00e5a0');
+  }
+  if(allHosts.length) renderTopo();
+}
+
+// ── Cards ─────────────────────────────────────────────────────────────────────
+function ptClass(p){
+  const n=parseInt(p);
+  if(n===22)return 'ssh';if(n===3389||n===5900)return 'rdp';
+  if(n===23)return 'telnet';if(n===1883||n===8883)return 'mqtt';
+  if([515,631,9100].includes(n))return 'print';
+  return '';
+}
+function riskColor(r){return r>=4?'var(--red)':r>=2?'var(--amber)':'var(--accent)'}
+function riskClass(r){return r>=4?'r':r>=2?'a':'g'}
+
+function renderCard(h){
+  const grid=document.getElementById('host-grid');
+  const el=document.createElement('div');
+  el.className='hcard new'; el.id=`c_${h.ip.replace(/\./g,'_')}`;
+  const ports=Object.entries(h.ports||{}).slice(0,6);
+  const cveCount=(h.cves||[]).length;
+  const riskCol=riskColor(h.risk||0);
+  el.innerHTML=`
+    ${cveCount?`<div class="hcard-cve">CVE×${cveCount}</div>`:''}
+    <div class="hcard-top">
+      <div class="hcard-ico" style="background:${h.bg}">${h.ico}</div>
+      <div style="flex:1;min-width:0">
+        <div class="hcard-ip">${h.ip}</div>
+        <div class="hcard-host">${h.hostname||'—'}</div>
+      </div>
+      <div class="hcard-bdg" style="color:${h.bdg};background:${h.bdgbg}">${h.label}</div>
+    </div>
+    <div class="hcard-ports">
+      ${ports.length?ports.map(([p,s])=>`<span class="ptag ${ptClass(p)}">${p}/${s}</span>`).join(''):'<span style="font-size:9px;color:var(--text3)">no open ports</span>'}
+    </div>
+    <div class="hcard-meta">
+      <span class="hcard-os">${h.os||'?'} · TTL ${h.ttlRaw||0}</span>
+      <span class="hcard-lat">${h.latency||0}ms</span>
+    </div>
+    <div class="risk-stripe" style="width:${(h.risk||0)/4*100}%;background:${riskCol}"></div>`;
+  el.onclick=()=>selectHost(h);
+  grid.appendChild(el);
+  document.getElementById('empty').style.display='none';
+}
+
+function applyFilters(){
+  const search=document.getElementById('search-in').value.toLowerCase();
+  let vis=0;
+  allHosts.forEach(h=>{
+    const el=document.getElementById(`c_${h.ip.replace(/\./g,'_')}`);
+    if(!el)return;
+    const typeOk = activeFilters.size===0 || activeFilters.has(h.type) ||
+                   (activeFilters.has('risky') && h.risk>=3);
+    const searchOk = !search || h.ip.includes(search) ||
+                     (h.hostname||'').toLowerCase().includes(search) ||
+                     (h.vendor||'').toLowerCase().includes(search);
+    if(typeOk&&searchOk){el.style.display='';vis++}
+    else el.style.display='none';
+  });
+  document.getElementById('empty').style.display=vis===0&&allHosts.length>0?'block':'none';
+}
+
+function toggleChip(el){
+  const t=el.dataset.t;
+  activeFilters.has(t)?(activeFilters.delete(t),el.classList.remove('on')):(activeFilters.add(t),el.classList.add('on'));
+  applyFilters();
+}
+function setView(m){
+  viewMode=m;
+  document.getElementById('host-grid').className=m==='list'?'list':'';
+  document.getElementById('vg').className='vbtn'+(m==='grid'?' on':'');
+  document.getElementById('vl').className='vbtn'+(m==='list'?' on':'');
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function updateSidebar(){
+  document.getElementById('st-up').textContent=allHosts.length;
+  const tp=allHosts.reduce((a,h)=>a+Object.keys(h.ports||{}).length,0);
+  document.getElementById('st-ports').textContent=tp;
+  document.getElementById('st-risky').textContent=allHosts.filter(h=>h.risk>=3).length;
+  const counts={};
+  allHosts.forEach(h=>{counts[h.type]=(counts[h.type]||0)+1});
+  const icons={router:'🌐',server:'🖥',windows:'💻',macos:'🍎',printer:'🖨',nas:'💾',iot:'💡',mobile:'📱',vm:'🔲'};
+  const labels={router:'Routers',server:'Servers',windows:'Windows',macos:'macOS',printer:'Printers',nas:'NAS',iot:'IoT',mobile:'Mobile',vm:'VMs'};
+  const tl=document.getElementById('type-list');
+  tl.innerHTML='';
+  Object.entries(counts).sort((a,b)=>b[1]-a[1]).forEach(([t,n])=>{
+    const row=document.createElement('div');
+    row.className='type-row'+(activeFilters.has(t)?' on':'');
+    row.innerHTML=`<div class="t-ico">${icons[t]||'?'}</div><span class="type-name">${labels[t]||t}</span><span class="type-cnt">${n}</span>`;
+    row.onclick=()=>{
+      const chip=document.querySelector(`.fchip[data-t="${t}"]`);
+      if(activeFilters.has(t)){activeFilters.delete(t);row.classList.remove('on');if(chip)chip.classList.remove('on')}
+      else{activeFilters.add(t);row.classList.add('on');if(chip)chip.classList.add('on')}
+      applyFilters();
+    };
+    tl.appendChild(row);
+  });
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function addLog(msg,cls=''){
+  const wrap=document.getElementById('log-scroll');
+  const el=document.createElement('div');
+  el.className='log-line'+(cls?' '+cls:'');
+  const t=new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  el.textContent=`${t}  ${msg}`;
+  wrap.appendChild(el);
+  wrap.scrollTop=wrap.scrollHeight;
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────────
+function selectHost(h){
+  selHost=h;
+  document.querySelectorAll('.hcard').forEach(c=>c.classList.remove('sel'));
+  const el=document.getElementById(`c_${h.ip.replace(/\./g,'_')}`);
+  if(el)el.classList.add('sel');
+  document.getElementById('dp-empty').style.display='none';
+  document.getElementById('dp').classList.add('vis');
+  renderDpHeader(h);
+  switchDpTab(document.querySelector('.dp-tab[data-tab="info"]'));
+}
+
+function renderDpHeader(h){
+  document.getElementById('dp-hdr').innerHTML=`
+    <div class="dp-ico" style="background:${h.bg}">${h.ico}</div>
+    <div style="flex:1;min-width:0">
+      <div class="dp-ip">${h.ip}</div>
+      <div class="dp-host">${h.hostname||'—'}</div>
+      <div class="dp-badge" style="color:${h.bdg};background:${h.bdgbg}">${h.label}</div>
+    </div>
+    <button class="dp-x" onclick="closeDetail()">✕</button>`;
+  renderDpActions(h);
+}
+
+function switchDpTab(el){
+  document.querySelectorAll('.dp-tab').forEach(t=>t.classList.remove('on'));
+  el.classList.add('on');
+  dpTab=el.dataset.tab;
+  renderDpBody(selHost);
+}
+
+function renderDpBody(h){
+  const body=document.getElementById('dp-body');
+  if(!h){body.innerHTML='';return;}
+  const ports=Object.entries(h.ports||{});
+  const cves=(h.cves||[]);
+  const findings=(h.findings||[]);
+  const rLabels=['None','Low','Moderate','High','Critical'];
+  const rc=riskClass(h.risk||0);
+
+  if(dpTab==='info'){
+    const banners=[
+      ['SSH',h.banner_ssh],['FTP',h.banner_ftp],
+      ['HTTP title',h.http_title],['HTTP server',h.http_server],
+      ['SNMP',h.snmp_desc],['SNMP uptime',h.snmp_uptime],
+      ['NetBIOS',h.netbios_name],
+    ].filter(([,v])=>v);
+    body.innerHTML=`
+      <div class="dp-section">
+        <div class="dp-stitle">Network</div>
+        <div class="dp-row"><span class="dp-k">IP</span><span class="dp-v g">${h.ip}</span></div>
+        <div class="dp-row"><span class="dp-k">Hostname</span><span class="dp-v">${h.hostname||'—'}</span></div>
+        <div class="dp-row"><span class="dp-k">MAC</span><span class="dp-v">${h.mac||'—'}</span></div>
+        <div class="dp-row"><span class="dp-k">Vendor</span><span class="dp-v">${h.vendor||'—'}</span></div>
+        <div class="dp-row"><span class="dp-k">Latency</span><span class="dp-v g">${h.latency||0} ms</span></div>
+      </div>
+      <div class="dp-section">
+        <div class="dp-stitle">System</div>
+        <div class="dp-row"><span class="dp-k">OS (TTL)</span><span class="dp-v">${h.os||'?'}</span></div>
+        <div class="dp-row"><span class="dp-k">TTL</span><span class="dp-v">${h.ttlRaw||0}</span></div>
+        <div class="dp-row"><span class="dp-k">Device</span><span class="dp-v">${h.label}</span></div>
+        <div class="dp-row"><span class="dp-k">First seen</span><span class="dp-v">${h.firstSeen||'—'}</span></div>
+      </div>
+      ${banners.length?`<div class="dp-section">
+        <div class="dp-stitle">Banners & info</div>
+        ${banners.map(([lbl,val])=>`<div class="banner-lbl">${lbl}</div><div class="banner-box">${val}</div>`).join('')}
+      </div>`:''}`;
+  }
+
+  if(dpTab==='ports'){
+    body.innerHTML=`
+      <div class="dp-section">
+        <div class="dp-stitle">${ports.length} open port(s)</div>
+        ${ports.length?`<div class="port-grid2">
+          ${ports.map(([p,s])=>{
+            const pc=ptClass(p);
+            return`<div class="dp-port ${pc}"><div class="dp-pnum">${p}</div><div class="dp-psvc">${s}</div></div>`;
+          }).join('')}
+        </div>`:'<span style="font-size:11px;color:var(--text3)">No open ports detected</span>'}
+      </div>`;
+  }
+
+  if(dpTab==='security'){
+    const riskBar=[...Array(5)].map((_,i)=>`<div class="rseg${i<(h.risk||0)?' on '+rc:''}"></div>`).join('');
+    body.innerHTML=`
+      <div class="dp-section">
+        <div class="dp-stitle">Risk assessment</div>
+        <div class="dp-row"><span class="dp-k">Score</span><span class="dp-v ${rc}">${rLabels[h.risk||0]}</span></div>
+        <div class="risk-meter">${riskBar}</div>
+      </div>
+      ${findings.length?`<div class="dp-section">
+        <div class="dp-stitle">Findings (${findings.length})</div>
+        ${findings.map(f=>`<div class="finding"><div class="finding-dot ${rc}"></div><div class="finding-txt">${f}</div></div>`).join('')}
+      </div>`:''}
+      ${h.default_creds?`<div class="dp-section">
+        <div class="dp-stitle" style="color:var(--red)">⚠ Default credentials work</div>
+        <div class="banner-box" style="border-color:var(--red)">${h.default_creds.user} / ${h.default_creds.pass}</div>
+      </div>`:''}
+      <div class="dp-section">
+        <div class="dp-stitle">CVEs (${cves.length})</div>
+        ${cves.length?cves.map(c=>`
+          <div class="cve-item">
+            <div class="cve-top">
+              <span class="cve-id">${c.id}</span>
+              <span class="cve-score sev-${c.severity}">${c.score} ${c.severity}</span>
+            </div>
+            <div class="cve-desc">${c.desc}</div>
+          </div>`).join(''):'<span style="font-size:11px;color:var(--text3)">No CVEs found</span>'}
+      </div>`;
+  }
+
+  if(dpTab==='trace'){
+    const hops=traceData[h.ip]||[];
+    body.innerHTML=`
+      <div class="dp-section">
+        <div class="dp-stitle" style="display:flex;justify-content:space-between">
+          Traceroute
+          <span style="cursor:pointer;color:var(--accent);font-size:10px" onclick="runTrace('${h.ip}')">▶ run</span>
+        </div>
+        ${hops.length?hops.map(hop=>`
+          <div class="trace-hop">
+            <span class="trace-n">${hop.hop}</span>
+            <span class="trace-ip">${hop.ip}</span>
+            <span class="trace-ms">${hop.ms!=null?hop.ms+' ms':'*'}</span>
+          </div>`).join(''):'<span style="font-size:11px;color:var(--text3)">Click ▶ run to start traceroute</span>'}
+      </div>`;
+  }
+}
+
+function renderDpActions(h){
+  document.getElementById('dp-actions').innerHTML=`
+    <button class="dpa" onclick="runDeepScan('${h.ip}')"><span class="di">⚡</span>Deep port scan</button>
+    <button class="dpa" onclick="runTrace('${h.ip}')"><span class="di">🔀</span>Traceroute</button>
+    <button class="dpa" onclick="copyIP('${h.ip}')"><span class="di">📋</span>Copy IP</button>
+    <button class="dpa" onclick="openHTTP('${h.ip}',${JSON.stringify(h.ports)})"><span class="di">🌐</span>Open HTTP</button>
+    <button class="dpa" onclick="wakeOnLan('${h.mac}','${h.ip}')"><span class="di">🔌</span>Wake on LAN</button>
+    <button class="dpa" onclick="lookupCVE('${h.ip}')"><span class="di">🔎</span>CVE lookup</button>`;
+}
+
+function closeDetail(){
+  document.getElementById('dp').classList.remove('vis');
+  document.getElementById('dp-empty').style.display='flex';
+  document.querySelectorAll('.hcard').forEach(c=>c.classList.remove('sel'));
+  selHost=null;
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+async function runTrace(ip){
+  addLog(`Traceroute → ${ip}`,'probe');
+  toast(`Running traceroute to ${ip}…`,'#4a9eff');
+  try{
+    const r=await fetch(`${API}/api/traceroute?ip=${ip}`);
+    const d=await r.json();
+    traceData[ip]=d.hops;
+    const tab=document.querySelector('.dp-tab[data-tab="trace"]');
+    switchDpTab(tab);
+    toast(`Traceroute done — ${d.hops.length} hops`,'#00e5a0');
+  }catch(e){toast('Traceroute failed','#ff4d6a');}
+}
+
+async function wakeOnLan(mac,ip){
+  if(!mac||mac==='—'){toast('No MAC address available','#f0a500');return;}
+  const r=await fetch(`${API}/api/wol`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mac})});
+  const d=await r.json();
+  d.ok?toast(`WoL magic packet sent to ${mac}`,'#00e5a0'):toast('WoL failed — check MAC','#ff4d6a');
+}
+
+function copyIP(ip){
+  navigator.clipboard?.writeText(ip);
+  toast(`Copied ${ip}`,'#4a9eff');
+}
+
+function openHTTP(ip,ports){
+  const p=Object.keys(ports||{});
+  const use443=p.includes('443'), use80=p.includes('80'), use8080=p.includes('8080');
+  const url=use443?`https://${ip}`:use80?`http://${ip}`:use8080?`http://${ip}:8080`:`http://${ip}`;
+  window.open(url,'_blank');
+}
+
+async function lookupCVE(ip){
+  const h=allHosts.find(x=>x.ip===ip);
+  if(!h)return;
+  const q=h.banner_ssh||h.http_server||h.snmp_desc||h.label;
+  if(!q){toast('No banner info for CVE lookup yet — run deep scan first','#f0a500');return;}
+  toast(`Looking up CVEs for: ${q}`,'#4a9eff');
+  const r=await fetch(`${API}/api/cve?q=${encodeURIComponent(q)}`);
+  const d=await r.json();
+  h.cves=d.cves;
+  if(selHost&&selHost.ip===ip) renderDpBody(h);
+  toast(`Found ${d.cves.length} CVE(s)`,'#00e5a0');
+}
+
+// ── Deep scan ─────────────────────────────────────────────────────────────────
+function runDeepScan(ip){
+  document.getElementById('ds-ip').textContent=ip;
+  document.getElementById('ds-bar').style.width='0%';
+  document.getElementById('ds-status').textContent='Scanning ports 1–10000…';
+  document.getElementById('ds-ports').innerHTML='';
+  document.getElementById('ds-wrap').classList.add('vis');
+  const es=new EventSource(`${API}/api/deepscan?ip=${ip}&min=1&max=10000`);
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.status==='progress'){
+      document.getElementById('ds-bar').style.width=d.pct+'%';
+      document.getElementById('ds-status').textContent=`Scanned ${d.scanned.toLocaleString()} ports…`;
+    }
+    if(d.status==='open'){
+      const div=document.createElement('div');
+      div.className='ds-port';
+      div.innerHTML=`<span class="ds-pnum">${d.port}</span><span class="ds-psvc">${d.service}</span>`;
+      document.getElementById('ds-ports').appendChild(div);
+    }
+    if(d.status==='done'){
+      document.getElementById('ds-status').textContent=`Done — ${Object.keys(d.open_ports).length} open ports found`;
+      document.getElementById('ds-bar').style.width='100%';
+      es.close();
+    }
+  };
+}
+function closeDeegscan(){document.getElementById('ds-wrap').classList.remove('vis');}
+
+// ── Topology map (D3) ─────────────────────────────────────────────────────────
+function showTopo(){
+  if(!allHosts.length){toast('Run a scan first','#f0a500');return;}
+  document.getElementById('topo-wrap').classList.add('vis');
+  renderTopo();
+}
+function hideTopo(){document.getElementById('topo-wrap').classList.remove('vis');}
+
+function renderTopo(){
+  const svg=d3.select('#topo-canvas');
+  svg.selectAll('*').remove();
+  const W=document.getElementById('topo-canvas').clientWidth||800;
+  const H=document.getElementById('topo-canvas').clientHeight||500;
+  svg.attr('width',W).attr('height',H);
+
+  // Gateway is first host or assumed .1
+  const subnet=allHosts[0]?.ip.split('.').slice(0,3).join('.')||'192.168.1';
+  const gateway=allHosts.find(h=>h.oct===1||h.type==='router')||allHosts[0];
+
+  const nodes=[
+    {id:'_gw',label:gateway?gateway.ip:'gateway',type:'router',ico:'🌐',host:gateway,r:24,fixed:true,x:W/2,y:H/2},
+    ...allHosts.filter(h=>h!==gateway).map(h=>({
+      id:h.ip,label:h.ip,type:h.type,ico:h.ico,host:h,r:16+Math.min(Object.keys(h.ports||{}).length,6)*1.5,
+    }))
+  ];
+  const links=nodes.filter(n=>n.id!=='_gw').map(n=>({source:'_gw',target:n.id}));
+
+  document.getElementById('topo-info').textContent=`${allHosts.length} hosts · ${allHosts.reduce((a,h)=>a+Object.keys(h.ports||{}).length,0)} open ports`;
+
+  const sim=d3.forceSimulation(nodes)
+    .force('link',d3.forceLink(links).id(d=>d.id).distance(120))
+    .force('charge',d3.forceManyBody().strength(-200))
+    .force('center',d3.forceCenter(W/2,H/2))
+    .force('collision',d3.forceCollide(d=>d.r+18));
+
+  const linkEl=svg.append('g').selectAll('line').data(links).join('line')
+    .attr('stroke','#2a3140').attr('stroke-width',1);
+
+  const nodeEl=svg.append('g').selectAll('g').data(nodes).join('g')
+    .style('cursor','pointer')
+    .call(d3.drag()
+      .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(.3).restart();d.fx=d.x;d.fy=d.y})
+      .on('drag', (e,d)=>{d.fx=e.x;d.fy=e.y})
+      .on('end',  (e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null})
+    )
+    .on('click',(e,d)=>{if(d.host){selectHost(d.host);document.getElementById('topo-wrap').classList.remove('vis')}});
+
+  nodeEl.append('circle')
+    .attr('r',d=>d.r)
+    .attr('fill',d=>d.host?d.host.bg:'rgba(0,229,160,.15)')
+    .attr('stroke',d=>d.id==='_gw'?'#00e5a0':'#2a3140')
+    .attr('stroke-width',d=>d.id==='_gw'?2:1);
+
+  nodeEl.append('text').attr('text-anchor','middle').attr('dy',6).attr('font-size',d=>d.id==='_gw'?20:14)
+    .text(d=>d.ico||'?');
+
+  nodeEl.append('text').attr('text-anchor','middle').attr('dy',d=>d.r+13)
+    .attr('font-size',9).attr('fill','#4a5a6e').text(d=>d.label);
+
+  sim.on('tick',()=>{
+    linkEl.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+          .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    nodeEl.attr('transform',d=>`translate(${d.x},${d.y})`);
+  });
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+async function loadHistory(){
+  try{
+    const r=await fetch(`${API}/api/history`);
+    const scans=await r.json();
+    const list=document.getElementById('hist-list');
+    list.innerHTML='';
+    if(!scans.length){list.innerHTML='<div style="padding:20px;font-size:11px;color:var(--text3);text-align:center">No scan history yet</div>';return;}
+    scans.forEach(s=>{
+      const el=document.createElement('div');
+      el.className='hist-item';
+      const d=new Date(s.started_at);
+      el.innerHTML=`
+        <div class="hist-date">${d.toLocaleDateString()} ${d.toLocaleTimeString()}</div>
+        <div class="hist-sub">${s.subnet}.0/24</div>
+        <div class="hist-pills">
+          <span class="hp g">${s.hosts_found} hosts</span>
+          <span class="hp b">${s.total_ports} ports</span>
+          ${s.finished_at?'':`<span class="hp a">incomplete</span>`}
+        </div>`;
+      el.onclick=async()=>{
+        document.querySelectorAll('.hist-item').forEach(i=>i.classList.remove('active'));
+        el.classList.add('active');
+        const hr=await fetch(`${API}/api/history/${s.id}/hosts`);
+        const hosts=await hr.json();
+        allHosts=hosts.map(h=>({...h,ports:h.ports||{},cves:[],findings:[],ico:h.ico||'🖥',bg:h.bg||'rgba(74,154,255,.15)',bdg:h.bdg||'#4a9eff',bdgbg:h.bdgbg||'rgba(74,154,255,.15)',label:h.label||h.type_key||'host'}));
+        document.getElementById('host-grid').innerHTML='';
+        allHosts.forEach(renderCard);
+        updateSidebar();
+        toast(`Loaded scan from ${d.toLocaleDateString()}`,'#4a9eff');
+      };
+      list.appendChild(el);
+    });
+  }catch(e){addLog('History load failed','err')}
+}
+
+// ── Changes ───────────────────────────────────────────────────────────────────
+async function loadChanges(){
+  try{
+    const r=await fetch(`${API}/api/changes`);
+    renderChanges(await r.json());
+  }catch(e){}
+}
+function updateChanges(changes){
+  const existing=document.getElementById('changes-list');
+  renderChanges(changes,true);
+  document.getElementById('change-badge').textContent=changes.length+' new';
+}
+function renderChanges(changes,prepend=false){
+  const list=document.getElementById('changes-list');
+  if(!prepend) list.innerHTML='';
+  if(!changes.length&&!prepend){
+    list.innerHTML='<div style="padding:20px;font-size:11px;color:var(--text3);text-align:center">No changes detected yet</div>';
+    return;
+  }
+  changes.forEach(c=>{
+    const el=document.createElement('div');
+    el.className='change-item';
+    const t=c.detected_at?new Date(c.detected_at).toLocaleTimeString():'';
+    el.innerHTML=`
+      <span class="change-type ct-${c.change_type}">${c.change_type.replace('_',' ')}</span>
+      <div>
+        <div class="change-detail">${c.detail}</div>
+        <div class="change-time">${t}</div>
+      </div>`;
+    prepend?list.prepend(el):list.appendChild(el);
+  });
+}
+
+// ── Known hosts ───────────────────────────────────────────────────────────────
+async function loadKnown(){
+  try{
+    const r=await fetch(`${API}/api/known`);
+    const hosts=await r.json();
+    const list=document.getElementById('known-list');
+    list.innerHTML='';
+    if(!hosts.length){list.innerHTML='<div style="padding:20px;font-size:11px;color:var(--text3);text-align:center">No hosts tracked yet</div>';return;}
+    hosts.forEach(h=>{
+      const el=document.createElement('div');
+      el.className='known-item';
+      const last=h.last_seen?new Date(h.last_seen).toLocaleDateString():'?';
+      el.innerHTML=`
+        <div class="k-ip">${h.ip}</div>
+        <div class="k-info">
+          <div class="k-host">${h.hostname||h.vendor||'—'}</div>
+          <div class="k-last">last: ${last}</div>
+        </div>`;
+      list.appendChild(el);
+    });
+  }catch(e){}
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats(){
+  try{
+    const r=await fetch(`${API}/api/stats`);
+    const d=await r.json();
+    document.getElementById('qs-scans').textContent=d.total_scans;
+    document.getElementById('qs-known').textContent=d.known_hosts;
+    document.getElementById('qs-changes').textContent=d.total_changes;
+  }catch(e){}
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+async function exportJSON(){
+  let data=allHosts;
+  if(!data.length){try{const r=await fetch(`${API}/api/last`);data=await r.json();}catch(e){}}
+  if(!data.length){toast('No data to export','#f0a500');return;}
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`netscan-${new Date().toISOString().slice(0,16).replace(/:/g,'-')}.json`;
+  a.click();
+  toast(`Exported ${data.length} hosts`,'#00e5a0');
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+function showModal(type){
+  const wrap=document.getElementById('modal-wrap');
+  const mc=document.getElementById('modal-content');
+  wrap.classList.add('vis');
+  if(type==='webhook'){
+    mc.innerHTML=`
+      <div class="modal-title">🔔 Webhook notifications</div>
+      <label class="modal-label">POST URL (receives JSON on new changes)</label>
+      <input class="modal-input" id="wh-url" placeholder="https://hooks.slack.com/…" value=""/>
+      <label class="modal-label">Events: new host, lost host, new port opened</label>
+      <div class="modal-btns">
+        <button class="tb-btn" onclick="closeModal()">Cancel</button>
+        <button class="tb-btn primary" onclick="saveWebhook()">Save</button>
+      </div>`;
+    fetch(`${API}/api/webhook`).then(r=>r.json()).then(d=>{if(d.url)document.getElementById('wh-url').value=d.url});
+  }
+  if(type==='monitor'){
+    mc.innerHTML=`
+      <div class="modal-title">⏱ Continuous monitoring</div>
+      <label class="modal-label">Subnet</label>
+      <input class="modal-input" id="mon-subnet" value="${document.getElementById('subnet-in').value||'192.168.1'}"/>
+      <label class="modal-label">Rescan interval (seconds)</label>
+      <input class="modal-input" id="mon-interval" type="number" value="300" min="60"/>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Runs in background. Change detection + webhook on every scan.</div>
+      <div class="modal-btns">
+        <button class="tb-btn danger" onclick="stopMonitor()">Stop monitor</button>
+        <button class="tb-btn" onclick="closeModal()">Cancel</button>
+        <button class="tb-btn primary" onclick="startMonitor()">Start</button>
+      </div>`;
+  }
+}
+function closeModal(){document.getElementById('modal-wrap').classList.remove('vis')}
+async function saveWebhook(){
+  const url=document.getElementById('wh-url').value.trim();
+  await fetch(`${API}/api/webhook`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  toast(url?`Webhook saved`:'Webhook cleared','#00e5a0');
+  closeModal();
+}
+async function startMonitor(){
+  const subnet=document.getElementById('mon-subnet').value.trim();
+  const interval=parseInt(document.getElementById('mon-interval').value)||300;
+  await fetch(`${API}/api/monitor/start`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subnet,interval})});
+  toast(`Monitor started — scanning every ${interval}s`,'#00e5a0');
+  closeModal();
+}
+async function stopMonitor(){
+  await fetch(`${API}/api/monitor/stop`,{method:'POST'});
+  toast('Monitor stopped','#f0a500');
+  closeModal();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _tt=null;
+function toast(msg,color='#00e5a0'){
+  document.getElementById('tmsg').textContent=msg;
+  document.getElementById('tdot').style.background=color;
+  document.getElementById('toast').className='show';
+  clearTimeout(_tt);_tt=setTimeout(()=>{document.getElementById('toast').className=''},3200);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadStats();
+(async()=>{
+  try{
+    const r=await fetch(`${API}/api/status`,{signal:AbortSignal.timeout(1500)});
+    const d=await r.json();
+    if(d.hosts_found>0) addLog(`Server has ${d.hosts_found} host(s) from last scan`,'info');
+    else addLog('Server ready','info');
+  }catch(e){addLog('server.py not detected — start it: sudo python3 server.py','err')}
+})();
+window.onclick=e=>{if(e.target===document.getElementById('modal-wrap'))closeModal()};
+</script>
+</body>
+</html>

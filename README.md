@@ -1,100 +1,100 @@
-# netlookscan
+# netlookscan — NetScan v2
 
-A multithreaded Python tool that sweeps a `/24` subnet for live hosts and fingerprints each one — hostname, OS guess, MAC/vendor, open ports, and inferred device type.
+A self-hosted dashboard for discovering, fingerprinting, and monitoring devices on your local network. A fast multithreaded scanner core feeds a live web UI over Server-Sent Events, with optional deep enrichment, risk scoring, history, and change tracking backed by SQLite.
 
-> **Use responsibly.** Only scan networks you own or have explicit permission to scan.
+> ⚠️ **Use responsibly.** This tool performs active scanning — ping sweeps, port scans, banner grabbing, SNMP/NetBIOS queries, and (in deep mode) default-credential checks. Only run it against networks and devices you own or are explicitly authorized to test.
 
 ## Features
 
-- Concurrent ping sweep across the entire subnet
-- Reverse DNS hostname lookup
-- OS guess via TTL heuristic (Linux/macOS/Android vs. Windows vs. network gear)
-- MAC address and vendor lookup (OUI table) from the local ARP cache
-- Fast scan of ~30 common service ports
-- Device type inference (router, printer, NAS, IoT, server, VM, etc.) based on ports, hostname, and vendor
+- **Live dashboard** — dark-themed web UI, streamed scan results in real time
+- **Ping sweep** of a configurable subnet and host range
+- **Fingerprinting** — hostname (reverse DNS), OS guess (TTL heuristic), MAC + vendor (ARP/OUI lookup), open ports (~30 common services), and inferred device type with icons
+- **Deep scan mode** — banner grabbing (SSH, FTP, SMTP, Telnet), HTTP title/Server header, SNMP `sysDescr`/uptime, NetBIOS name, default-credential checks, and CVE lookups (NVD, cached)
+- **Risk scoring** — flags risky open services (Telnet, FTP, VNC, RDP, exposed SMB, etc.)
+- **Deep port scan** — scan a custom port range on a single host
+- **Scan history** — every scan persisted to SQLite, browsable from the UI
+- **Known hosts + change detection** — tracks new/lost hosts and newly opened/closed ports across scans
+- **Continuous monitoring** — background scans on a configurable interval
+- **Webhooks** — POST notifications when changes are detected
+- **Traceroute** and **Wake-on-LAN** from the dashboard
+
+## Project Structure
+
+| File               | Purpose                                                                 |
+|--------------------|--------------------------------------------------------------------------|
+| `server.py`        | Flask backend — REST + SSE API, scan orchestration, monitoring loop      |
+| `scanner_core.py`  | Ping sweep, TTL-based OS guess, ARP/vendor lookup, port scan, device-type inference |
+| `enrichment.py`    | Deep fingerprinting — banners, HTTP/SNMP/NetBIOS, CVE lookup, risk scoring, traceroute, Wake-on-LAN |
+| `db.py`            | SQLite persistence — scans, hosts, ports, known hosts, change log, CVE cache |
+| `netscanner.html`  | Web dashboard front end                                                   |
+| `launch.sh`        | Installs dependencies and starts the server                              |
 
 ## Requirements
 
 - Python 3.10+
-- `ping` and `arp` available on the system PATH (default on Windows, Linux, and macOS)
-- MAC/vendor lookup only works for devices on the same local network segment (same L2/broadcast domain) — it relies on the host's ARP cache
-- Reading the ARP table may require elevated privileges on some systems
+- Flask, Flask-CORS
+- `ping`, `arp`, and `traceroute`/`tracert` available on the system PATH
+- Root/administrator privileges are recommended — needed for reliable ARP cache access, raw ICMP, and SNMP/NetBIOS UDP queries on some systems
 
-## Usage
+## Quick Start
 
 ```bash
-python3 scanner_core.py
+chmod +x launch.sh
+./launch.sh
 ```
 
-The scan runs in two phases:
+Then open **http://localhost:5000** in your browser.
 
-1. **Ping sweep** — quickly identifies which hosts in the subnet are alive
-2. **Fingerprinting** — for each live host, gathers hostname, OS guess, MAC/vendor, open ports, and device type
+`launch.sh` installs Flask and Flask-CORS via `apt` if they're missing, then runs `server.py` with `sudo` (required for ARP and raw socket access on most systems).
 
-## Configuration
+## Using the Dashboard
 
-Edit the constants near the top of the script:
+1. Enter the subnet and host range to scan (defaults to `192.168.1`, `0–255`)
+2. Optionally enable **Deep Scan** for banner grabbing, SNMP/NetBIOS queries, CVE lookups, and default-credential checks
+3. Start the scan — results stream in live, with each host's hostname, OS guess, MAC/vendor, open ports, device type, and risk score
+4. Browse **scan history**, **known hosts**, and the **change log** from the side panels
+5. Click a host for details, traceroute, Wake-on-LAN, or a deep port scan
+6. Enable **continuous monitoring** to re-scan automatically on an interval, and optionally configure a webhook to receive change notifications
 
-| Variable       | Description                              | Default     |
-|-----------------|-------------------------------------------|-------------|
-| `SUBNET`        | Base subnet (first 3 octets)              | `192.168.1` |
-| `START` / `END` | Host octet range to scan                  | `0` – `255` |
-| `MAX_WORKERS`   | Concurrent threads for the ping sweep     | `50`        |
-| `PING_TIMEOUT`  | Timeout per ping (seconds)                | `1`         |
-| `PING_COUNT`    | Packets sent per host                     | `1`         |
-| `PORT_TIMEOUT`  | Timeout per port probe (seconds)          | `0.5`       |
-| `COMMON_PORTS`  | Dict of `{port: service-label}` to probe  | ~30 ports   |
+## API Reference
 
-The `OUI_TABLE` dict maps MAC address prefixes to vendor names and can be extended with additional OUIs as needed.
+| Endpoint                          | Method | Description                              |
+|------------------------------------|--------|--------------------------------------------|
+| `/api/scan?subnet=...&end=...&deep=1` | GET    | SSE stream of a live scan                |
+| `/api/status`                      | GET    | Current scan status                       |
+| `/api/stop`                        | POST   | Stop the running scan                     |
+| `/api/last`                        | GET    | Results from the most recent scan         |
+| `/api/history`                     | GET    | List of past scans                        |
+| `/api/history/<scan_id>/hosts`     | GET    | Hosts found in a given scan               |
+| `/api/known`                       | GET    | All known hosts                           |
+| `/api/changes`                     | GET    | Change log (new/lost hosts, port changes) |
+| `/api/stats`                       | GET    | Summary statistics                        |
+| `/api/deepscan?ip=...&min=...&max=...` | GET | SSE stream of a full port range scan on one host |
+| `/api/traceroute?ip=...`           | GET    | Traceroute to a host                      |
+| `/api/wol`                         | POST   | Send a Wake-on-LAN packet (`{"mac": "..."}`) |
+| `/api/cve?q=...`                   | GET    | CVE lookup for a banner/product string    |
+| `/api/webhook`                     | GET/POST | Get or set the change-notification webhook URL |
+| `/api/monitor/status`              | GET    | Continuous monitoring status              |
+| `/api/monitor/start`               | POST   | Start monitoring (`{"interval": 300}`)    |
+| `/api/monitor/stop`                | POST   | Stop monitoring                           |
 
-## Example Output
+## Data Storage
 
-```
-============================================================
-  Subnet Scanner + Fingerprint — 192.168.1.0–192.168.1.255
-  Started : 2026-06-14 10:30:00
-  Threads : 50  |  Ping timeout : 1s  |  Port timeout : 0.5s
-============================================================
-  Phase 1 — Pinging all hosts …
+A SQLite database (`netscan.db`) is created automatically alongside the scripts and stores:
 
-  [  1/256]  192.168.1.1        ✔  UP
-  [  2/256]  192.168.1.2        ✘  DOWN
-  ...
-
-  Phase 1 done — 5 host(s) up.
-
-============================================================
-  Phase 2 — Fingerprinting live hosts …
-
-  [1/5]  Fingerprinting 192.168.1.1 …
-  ...
-
-============================================================
-  SCAN REPORT
-============================================================
-
-  IP          : 192.168.1.1
-  Device Type : 🌐 Network / Router
-  Hostname    : router.lan
-  OS (TTL=64) : Linux / Android / macOS
-  MAC         : cc:9e:a2:11:22:33   Vendor: Ubiquiti
-  Open Ports  : 22/SSH, 80/HTTP, 443/HTTPS
-  ────────────────────────────────────────────────────
-
-  Total live hosts : 5
-  Scan finished   : 2026-06-14 10:30:42
-```
+- `scans` — one row per scan run
+- `hosts` / `ports` — fingerprint results per scan
+- `known_hosts` — latest state of every device ever seen
+- `changes` — detected new/lost hosts and port changes
+- `cve_cache` — cached NVD lookups
 
 ## Limitations
 
 - TTL-based OS guessing is a heuristic and not always accurate
-- Vendor lookup is limited to the OUIs included in `OUI_TABLE`
-- Port scanning is limited to the ports listed in `COMMON_PORTS`
+- MAC/vendor lookup only works for devices on the same L2 segment (relies on the local ARP cache) and is limited to the OUIs in `OUI_TABLE`
+- SNMP, NetBIOS, and HTTP enrichment depend on those services being enabled on the target device
+- Deep scan, default-credential checks, and full port-range scans are noticeably more invasive — use only for auditing your own devices
 
 ## License
 
-MIT
-
-## License
-
-Free to use but cite me if possible. If you make a 1000 dollars from this, gvie me 1 dollar :)
+Free to use but cite me if possible. If you make a 1000 dollars from this, give me 1 dollar :)
